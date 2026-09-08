@@ -14,7 +14,7 @@
 
 Репозитории отвечают за сохранение записей. Решения о смене foreground/system state,
 подсчёте процессов приложения, backdated IDLE, recovery и согласовании RAM с БД
-будет принимать session manager следующего этапа.
+принимает session manager; его контракты описаны в [core.md](core.md).
 
 ## SQLite и миграции
 
@@ -66,7 +66,8 @@ with db.transaction() as connection:
 ```
 
 В этом примере times — искусственные миллисекунды для иллюстрации. Он оставляет
-открытые sessions/run; автоматического завершения или recovery на этом этапе нет.
+открытые sessions/run. Для управления жизненным циклом используйте `TrackerRuntime`
+из [core.md](core.md): низкоуровневые репозитории сами не выполняют recovery.
 
 Каждый метод записи использует транзакцию либо savepoint внутри внешней транзакции.
 Несколько операций одного события нужно группировать через `Database.transaction()`
@@ -78,9 +79,9 @@ with db.transaction() as connection:
 Ошибка записи не продвигает границу восстановления. Heartbeat обновляет отдельное
 монотонное поле. `TrackerRun.recovery_at` возвращает максимум этих двух границ.
 
-`runs.finish()` требует предварительного закрытия всех sessions. Сам алгоритм
-штатного завершения и crash recovery реализуется следующим этапом.
-При запуске будущего tracker single-instance lock берётся до работы с БД;
+`runs.finish()` требует предварительного закрытия всех sessions. Алгоритм
+штатного завершения и crash recovery реализован в session manager.
+При запуске `TrackerRuntime` single-instance lock берётся до работы с БД;
 уникальный индекс открытого run дополняет его, но не заменяет блокировку процесса.
 
 ## Неизвестные процессы и параметры приложений
@@ -91,9 +92,10 @@ with db.transaction() as connection:
 привязка не выполняется. Running session создаёт session manager с момента
 определения приложения, а не задним числом.
 
-`applications.update_settings()` обновляет только сохранённые flags. Будущая команда
-PATCH должна через session manager одновременно обновить RAM и при необходимости
-перекрыть foreground session на границе изменения title policy. Сам repository не
+`applications.update_settings()` обновляет только сохранённые flags. Событие
+`ApplicationSettingsChanged` через session manager одновременно обновляет RAM и
+перекрывает foreground session на границе изменения title policy. Будущая команда
+PATCH будет передаваться этому обработчику. Сам repository не
 закрывает текущую session. Новые foreground records дополнительно маскируют title,
 если у приложения отключён track_titles; старые titles не удаляются.
 

@@ -4,6 +4,8 @@ Methods compose inside an outer transaction. A failed individual write rolls bac
 its savepoint, including any change to the run's last-persisted boundary.
 """
 
+from __future__ import annotations
+
 import ntpath
 import sqlite3
 from typing import Any
@@ -150,6 +152,12 @@ class TrackerRunRepository(_Records[TrackerRun]):
     def get_open(self) -> TrackerRun | None:
         row = self.connection.execute(
             "SELECT * FROM tracker_runs WHERE ended_at IS NULL"
+        ).fetchone()
+        return self._decode(row) if row is not None else None
+
+    def get_latest(self) -> TrackerRun | None:
+        row = self.connection.execute(
+            "SELECT * FROM tracker_runs ORDER BY id DESC LIMIT 1"
         ).fetchone()
         return self._decode(row) if row is not None else None
 
@@ -335,6 +343,7 @@ class Repositories:
     """Repositories sharing one connection and, optionally, the current tracker run."""
 
     def __init__(self, connection: sqlite3.Connection, *, run_id: int | None = None) -> None:
+        self._connection = connection
         self.applications = ApplicationRepository(connection)
         self.executables = ExecutableRepository(connection)
         self.runs = TrackerRunRepository(connection)
@@ -342,3 +351,6 @@ class Repositories:
         self.running = RunningSessionRepository(connection, run_id)
         self.foreground = ForegroundSessionRepository(connection, run_id)
         self.system_states = SystemStateSessionRepository(connection, run_id)
+
+    def for_run(self, run_id: int) -> Repositories:
+        return Repositories(self._connection, run_id=run_id)

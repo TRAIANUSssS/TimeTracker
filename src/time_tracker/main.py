@@ -7,15 +7,16 @@ from pathlib import Path
 
 from time_tracker import __version__
 from time_tracker.paths import default_database_path
+from time_tracker.platform.instance_lock import AlreadyRunningError, InstanceLock
 from time_tracker.storage.database import Database
 from time_tracker.storage.migrations import MigrationError
 
 
 def main() -> int:
-    """Initialize storage explicitly; the tracking runtime is a later implementation stage."""
+    """Initialize storage explicitly; Windows collection will be connected later."""
     parser = argparse.ArgumentParser(
         prog="time-tracker",
-        description="TimeTracker storage tools. Tracking is not implemented yet.",
+        description="TimeTracker storage tools. Windows collection is not implemented yet.",
     )
     parser.add_argument("--version", action="version", version=f"TimeTracker {__version__}")
     parser.add_argument(
@@ -32,12 +33,13 @@ def main() -> int:
             database = Database(
                 args.database if args.database is not None else default_database_path()
             )
-            version = database.initialize()
-        except (OSError, sqlite3.Error, MigrationError) as error:
+            with InstanceLock(database.path):
+                version = database.initialize()
+        except (OSError, sqlite3.Error, MigrationError, AlreadyRunningError) as error:
             print(f"Database initialization failed: {error}", file=sys.stderr)
             return 1
         print(f"Database ready: {database.path} (schema version {version})")
     else:
-        print("Storage foundation is ready. Use --init-db to initialize the database.")
-        print("Tracking and dashboard are not implemented yet.")
+        print("Storage and session core are ready. Use --init-db to initialize the database.")
+        print("Windows collection and dashboard are not implemented yet.")
     return 0
