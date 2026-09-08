@@ -1,0 +1,52 @@
+# Python environments, caches and packaging output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+/build/
+/dist/
+
+# Local tracker history, logs and icon cache
+/data/
+/logs/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+*.log
+*.log.*
+
+# Local configuration
+.env
+.env.*
+!.env.example
+
+# Frontend dependencies and generated output
+node_modules/
+/frontend/dist/
+/frontend/.vite/
+/frontend/coverage/
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+ChatGPT Image 8 сент. 2026 г., 15_15_12.png

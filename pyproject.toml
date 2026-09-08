@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "time-tracker-local"
+dynamic = ["version"]
+description = "Local Windows time tracker with interval-based history."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    "ruff>=0.11,<1",
+]
+
+[project.scripts]
+time-tracker = "time_tracker.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["time_tracker*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "time_tracker.__version__"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib", "-ra"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.format]
+# Specifications contain illustrative snippets, not executable Python modules.
+exclude = ["*.md"]
