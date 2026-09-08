@@ -56,10 +56,8 @@ def main(argv=None) -> int:
         print(f"Database ready: {database.path} (schema version {version})")
     else:
         print("Storage and session core are ready. Use --init-db to initialize the database.")
-        print(
-            "Use --track to start Windows collection in the tray. Dashboard is not available yet."
-        )
-        print("The local API starts with the tracker at http://127.0.0.1:8765/docs.")
+        print("Use --track to start Windows collection and the dashboard in the tray.")
+        print("Dashboard: http://127.0.0.1:8765/ ; API documentation: /docs.")
     return 0
 
 

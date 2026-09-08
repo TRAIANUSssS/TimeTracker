@@ -1,12 +1,14 @@
 """Read-only request snapshots and commands to the existing tracker writer."""
 
 import hashlib
+import json
 import sqlite3
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.staticfiles import StaticFiles
 
 from time_tracker import __version__
 from time_tracker.api.commands import WriterUnavailable
@@ -25,6 +27,7 @@ from time_tracker.api.schemas import (
     TimelineFilters,
     WeekdayCell,
 )
+from time_tracker.paths import web_directory
 from time_tracker.runtime import SystemClock
 from time_tracker.storage.stats import Statistics, application_json
 
@@ -49,10 +52,14 @@ def create_app(database, *, commands=None, clock=None) -> FastAPI:
     async def storage_error(request, error):
         return JSONResponse({"detail": "Storage temporarily unavailable"}, status_code=503)
 
-    def stats(filters, operation, **kwargs):
+    def stats(filters, operation, *, response=None, **kwargs):
         now = clock.now_ms()
         with database.reader() as connection:
             reader = Statistics(connection, filters.selection(), now)
+            if response is not None:
+                # Keep the specified JSON array contract; expose the full axis even when
+                # there is no history or the selection is entirely in the future.
+                response.headers["X-TimeTracker-Windows"] = json.dumps(reader.windows)
             return getattr(reader, operation)(**kwargs)
 
     @app.get("/stats/apps", response_model=AppsResponse)
@@ -68,8 +75,8 @@ def create_app(database, *, commands=None, clock=None) -> FastAPI:
         return stats(filters, "context_switches")
 
     @app.get("/stats/timeline", response_model=list[ApplicationSegment | OtherSegment])
-    def timeline(filters: Annotated[TimelineFilters, Query()]):
-        return stats(filters, "timeline")
+    def timeline(filters: Annotated[TimelineFilters, Query()], response: Response):
+        return stats(filters, "timeline", response=response)
 
     @app.get("/stats/activity", response_model=list[DateCell] | list[WeekdayCell])
     def activity(filters: Annotated[ActivityFilters, Query()]):
@@ -113,5 +120,25 @@ def create_app(database, *, commands=None, clock=None) -> FastAPI:
             if path.is_file():
                 return FileResponse(path, media_type="image/png")
         raise HTTPException(404, "No cached icon")
+
+    web = web_directory()
+    if (web / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=web / "assets"), name="assets")
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    def favicon():
+        if not (web / "favicon.svg").is_file():
+            raise HTTPException(404)
+        return FileResponse(web / "favicon.svg", media_type="image/svg+xml")
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/advanced", include_in_schema=False)
+    @app.get("/settings", include_in_schema=False)
+    def dashboard():
+        if not (web / "index.html").is_file():
+            raise HTTPException(
+                503, "Dashboard is not built. Run npm ci and npm run build in frontend."
+            )
+        return FileResponse(web / "index.html", media_type="text/html")
 
     return app

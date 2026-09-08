@@ -44,6 +44,8 @@ node_modules/
 /frontend/dist/
 /frontend/.vite/
 /frontend/coverage/
+/frontend/test-results/
+/frontend/playwright-report/
 
 # Editor and OS files
 .idea/

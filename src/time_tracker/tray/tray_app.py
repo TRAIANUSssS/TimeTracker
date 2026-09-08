@@ -2,6 +2,7 @@
 
 import logging
 import signal
+import webbrowser
 from collections import deque
 from uuid import uuid4
 
@@ -10,21 +11,35 @@ import win32con
 import win32gui
 import win32ts
 
+from time_tracker.paths import tray_icon_path
+
 logger = logging.getLogger(__name__)
 WM_TRAY = win32con.WM_APP + 1
 EXIT_COMMAND = 1003
+DASHBOARD_COMMAND = 1001
+AUTOSTART_COMMAND = 1004
 
 
 class TrayApplication:
-    def __init__(self, controller, api, *, show_icon=True, service=None):
+    def __init__(self, controller, api, *, show_icon=True, service=None, autostart=None):
         self.controller = controller
         self.api = api
         self.show_icon = show_icon
         self.service = service
+        self.autostart = autostart
         self.hwnd = None
         self._class_name = f"TimeTracker.{uuid4().hex}"
         self._taskbar_created = win32gui.RegisterWindowMessage("TaskbarCreated")
         self._icon = win32gui.LoadIcon(0, win32con.IDI_APPLICATION)
+        self._owns_icon = False
+        if tray_icon_path().is_file():
+            try:
+                self._icon = win32gui.LoadImage(
+                    0, str(tray_icon_path()), win32con.IMAGE_ICON, 32, 32, win32con.LR_LOADFROMFILE
+                )
+                self._owns_icon = True
+            except win32gui.error:
+                logger.debug("Could not load tray artwork; using system icon")
         self._registered = False
         self._power_registration = None
         self._started = False
@@ -109,13 +124,24 @@ class TrayApplication:
     def _menu(self):
         menu = win32gui.CreatePopupMenu()
         try:
-            win32gui.AppendMenu(
-                menu, win32con.MF_STRING | win32con.MF_GRAYED, 1001, "Открыть dashboard"
-            )
+            win32gui.AppendMenu(menu, win32con.MF_STRING, DASHBOARD_COMMAND, "Открыть dashboard")
             win32gui.AppendMenu(
                 menu, win32con.MF_STRING | win32con.MF_GRAYED, 1002, "Приостановить запись"
             )
             win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
+            if self.autostart is not None:
+                try:
+                    checked = self.autostart.enabled()
+                except (OSError, ValueError):
+                    checked = False
+                    logger.warning("Cannot read autostart setting", exc_info=True)
+                win32gui.AppendMenu(
+                    menu,
+                    win32con.MF_STRING | (win32con.MF_CHECKED if checked else 0),
+                    AUTOSTART_COMMAND,
+                    "Запускать вместе с Windows",
+                )
+                win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
             win32gui.AppendMenu(menu, win32con.MF_STRING, EXIT_COMMAND, "Выход")
             x, y = win32gui.GetCursorPos()
             try:
@@ -135,8 +161,28 @@ class TrayApplication:
             win32gui.PostMessage(self.hwnd, win32con.WM_NULL, 0, 0)
             if command == EXIT_COMMAND:
                 self._close()
+            elif command == DASHBOARD_COMMAND:
+                self._open_dashboard()
+            elif command == AUTOSTART_COMMAND:
+                self._toggle_autostart()
         finally:
             win32gui.DestroyMenu(menu)
+
+    def _open_dashboard(self):
+        if self.service is not None:
+            webbrowser.open(self.service.url, new=2)
+
+    def _toggle_autostart(self):
+        try:
+            self.autostart.set_enabled(not self.autostart.enabled())
+        except (OSError, ValueError):
+            logger.warning("Cannot update autostart setting", exc_info=True)
+            win32gui.MessageBox(
+                self.hwnd,
+                "Не удалось изменить автозапуск. Подробности в журнале приложения.",
+                "TimeTracker",
+                win32con.MB_ICONWARNING,
+            )
 
     def _notify(self, kind):
         logger.info("Windows notification: %s", kind)
@@ -193,11 +239,10 @@ class TrayApplication:
                 if not self._closing:
                     self._close()
                 return 0
-            if (
-                message == WM_TRAY
-                and not self._busy
-                and lparam in (win32con.WM_RBUTTONUP, win32con.WM_LBUTTONUP)
-            ):
+            if message == WM_TRAY and lparam == win32con.WM_LBUTTONUP and not self._busy:
+                self._open_dashboard()
+                return 0
+            if message == WM_TRAY and not self._busy and lparam == win32con.WM_RBUTTONUP:
                 self._menu()
                 return 0
             if message == self._taskbar_created and self._started and self.show_icon:
@@ -252,3 +297,6 @@ class TrayApplication:
                     logger.debug("Tray icon already removed")
             win32gui.DestroyWindow(self.hwnd)
         self.hwnd = None
+        if self._owns_icon:
+            win32gui.DestroyIcon(self._icon)
+            self._owns_icon = False
