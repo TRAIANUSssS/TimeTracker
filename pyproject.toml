@@ -8,7 +8,11 @@ dynamic = ["version"]
 description = "Local Windows time tracker with interval-based history."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "psutil>=6,<8; sys_platform == 'win32'",
+    "pywin32>=308; sys_platform == 'win32'",
+    "Pillow>=11,<13; sys_platform == 'win32'",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -18,6 +22,9 @@ dev = [
 
 [project.scripts]
 time-tracker = "time_tracker.main:main"
+
+[project.gui-scripts]
+time-tracker-tray = "time_tracker.main:tray_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

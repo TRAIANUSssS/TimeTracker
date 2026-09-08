@@ -21,6 +21,8 @@ from time_tracker.domain.events import (
     ProcessStopped,
     SessionLocked,
     SessionUnlocked,
+    SleepPeriodRecorded,
+    SystemResumed,
     SystemSleep,
     SystemWake,
     TrackerEvent,
@@ -169,7 +171,20 @@ class SessionManager:
         self, state: TrackerState, repo: TrackerRepositories, event: TrackerEvent
     ) -> None:
         at = event.observed_at
-        if isinstance(event, (SystemWake, SessionUnlocked)):
+        if isinstance(event, SleepPeriodRecorded):
+            repo.system_states.record_sleep(event.started_at, event.ended_at, at=at)
+            state.system_session = repo.system_states.list_open()[0]
+            if state.foreground is not None:
+                open_foreground = repo.foreground.list_open()
+                if not open_foreground or open_foreground[0].id != state.foreground.session.id:
+                    state.foreground = None
+        elif isinstance(event, SystemResumed):
+            self._check_snapshot_time(at, event.snapshot)
+            if event.snapshot.is_sleeping:
+                raise ValueError("Resume user state cannot be sleeping")
+            state.last_input_at = event.snapshot.last_input_at
+            self._change_system(state, repo, self._snapshot_flags(event.snapshot), at)
+        elif isinstance(event, (SystemWake, SessionUnlocked)):
             self._check_snapshot_time(at, event.snapshot)
             if isinstance(event, SystemWake) and event.snapshot.is_sleeping:
                 raise ValueError("Wake snapshot cannot still be sleeping")
@@ -257,6 +272,9 @@ class SessionManager:
             application = repo.applications.create(name, at=at)
             executable = repo.executables.create(application.id, path, at=at)
             state.applications[application.id] = application
+            logger.info(
+                "Registered application %s and executable %s", application.id, executable.id
+            )
         elif executable.application_id not in state.applications:
             application = repo.applications.get(executable.application_id)
             if application is None:

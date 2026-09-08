@@ -59,6 +59,8 @@ class EventType(StrEnum):
     SESSION_UNLOCKED = "SESSION_UNLOCKED"
     SYSTEM_SLEEP = "SYSTEM_SLEEP"
     SYSTEM_WAKE = "SYSTEM_WAKE"
+    SYSTEM_RESUMED = "SYSTEM_RESUMED"
+    SLEEP_PERIOD_RECORDED = "SLEEP_PERIOD_RECORDED"
     HEARTBEAT = "HEARTBEAT"
     APPLICATION_SETTINGS_CHANGED = "APPLICATION_SETTINGS_CHANGED"
 
@@ -141,6 +143,23 @@ class SessionUnlocked(TrackerEvent):
 class SystemWake(TrackerEvent):
     snapshot: TrackerSnapshot
     kind: ClassVar[EventType] = EventType.SYSTEM_WAKE
+
+
+@dataclass(frozen=True, slots=True)
+class SystemResumed(TrackerEvent):
+    """Fresh user state, before the slower process/foreground snapshot is ready."""
+
+    snapshot: TrackerSnapshot
+    kind: ClassVar[EventType] = EventType.SYSTEM_RESUMED
+
+
+@dataclass(frozen=True, slots=True)
+class SleepPeriodRecorded(TrackerEvent):
+    """A completed OS sleep interval received after its actual boundaries."""
+
+    started_at: int
+    ended_at: int
+    kind: ClassVar[EventType] = EventType.SLEEP_PERIOD_RECORDED
 
 
 @dataclass(frozen=True, slots=True)

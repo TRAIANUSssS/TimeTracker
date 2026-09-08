@@ -338,6 +338,53 @@ class SystemStateSessionRepository(_SessionRecords[SystemStateSession]):
     def start(self, state: SystemState, *, at: int) -> SystemStateSession:
         return self._start(at, state=SystemState(state).value)
 
+    def record_sleep(self, started_at: int, ended_at: int, *, at: int) -> None:
+        """Overlay an authoritative completed interval, confined to this open run.
+
+        Preserve non-sleep segments and clip stale foreground at the sleep boundary.
+        Foreground after sleep requires a new observation, never a reconstructed tail.
+        """
+        with transaction(self.connection):
+            run_start = self._run_start(at)
+            if not run_start <= started_at < ended_at <= at:
+                raise ValueError("Confirmed sleep must be a completed interval within the run")
+            rows = self.connection.execute(
+                """SELECT * FROM system_state_sessions WHERE started_at >= ?
+                   AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)
+                   AND state <> 'SLEEP' ORDER BY started_at""",
+                (run_start, ended_at, started_at),
+            ).fetchall()
+            changed = bool(rows)
+            for row in rows:
+                start, end, state = row["started_at"], row["ended_at"], row["state"]
+                left, right = max(start, started_at), min(end or ended_at, ended_at)
+                self.connection.execute(
+                    "DELETE FROM system_state_sessions WHERE id=?", (row["id"],)
+                )
+                if start < left:
+                    self._insert(state=state, started_at=start, ended_at=left)
+                self._insert(state="SLEEP", started_at=left, ended_at=right)
+                if end is None or right < end:
+                    self._insert(state=state, started_at=right, ended_at=end)
+            foreground = self.connection.execute(
+                """SELECT id,started_at FROM foreground_sessions WHERE started_at >= ?
+                   AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)""",
+                (run_start, ended_at, started_at),
+            ).fetchall()
+            for row in foreground:
+                changed = True
+                if row["started_at"] < started_at:
+                    self.connection.execute(
+                        "UPDATE foreground_sessions SET ended_at=? WHERE id=?",
+                        (started_at, row["id"]),
+                    )
+                else:
+                    self.connection.execute(
+                        "DELETE FROM foreground_sessions WHERE id=?", (row["id"],)
+                    )
+            if changed:
+                self._record_boundary(at)
+
 
 class Repositories:
     """Repositories sharing one connection and, optionally, the current tracker run."""

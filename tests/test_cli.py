@@ -51,3 +51,9 @@ def test_cli_reports_invalid_location_without_traceback(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "initialization failed" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_cli_cannot_combine_tracking_and_initialization(tmp_path: Path) -> None:
+    result = run_cli(tmp_path, "--track", "--init-db")
+    assert result.returncode == 2
+    assert list(tmp_path.iterdir()) == []

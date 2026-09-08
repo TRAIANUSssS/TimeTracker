@@ -90,6 +90,7 @@ class Foreground(Sessions[ForegroundSession], Protocol):
 
 class SystemSessions(Sessions[SystemStateSession], Protocol):
     def start(self, state: SystemState, *, at: int) -> SystemStateSession: ...
+    def record_sleep(self, started_at: int, ended_at: int, *, at: int) -> None: ...
 
 
 class TrackerRepositories(Protocol):
