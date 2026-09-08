@@ -16,10 +16,11 @@ EXIT_COMMAND = 1003
 
 
 class TrayApplication:
-    def __init__(self, controller, api, *, show_icon=True):
+    def __init__(self, controller, api, *, show_icon=True, service=None):
         self.controller = controller
         self.api = api
         self.show_icon = show_icon
+        self.service = service
         self.hwnd = None
         self._class_name = f"TimeTracker.{uuid4().hex}"
         self._taskbar_created = win32gui.RegisterWindowMessage("TaskbarCreated")
@@ -65,6 +66,8 @@ class TrayApplication:
             try:
                 self.controller.start()
                 self._started = True
+                if self.service is not None:
+                    self.service.start()
             finally:
                 self._busy = False
             self._drain()
@@ -157,6 +160,8 @@ class TrayApplication:
             if message == win32con.WM_TIMER and self._started and not self._busy:
                 self._busy = True
                 try:
+                    if self.service is not None:
+                        self.service.tick()
                     self.controller.tick()
                 finally:
                     self._busy = False
@@ -216,6 +221,8 @@ class TrayApplication:
         if self._closing:
             return
         self._closing = True
+        if self.service is not None:
+            self.service.stop()
         if self._started:
             self.controller.stop()
             self._started = False
@@ -223,6 +230,8 @@ class TrayApplication:
 
     def _cleanup(self):
         self._closing = True
+        if self.service is not None:
+            self.service.stop()
         if self._started:
             self.controller.stop()
             self._started = False

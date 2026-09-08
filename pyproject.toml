@@ -9,6 +9,9 @@ description = "Local Windows time tracker with interval-based history."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "tzdata>=2025.1",
     "psutil>=6,<8; sys_platform == 'win32'",
     "pywin32>=308; sys_platform == 'win32'",
     "Pillow>=11,<13; sys_platform == 'win32'",
@@ -16,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "httpx>=0.28,<1",
     "pytest>=8,<10",
     "ruff>=0.11,<1",
 ]

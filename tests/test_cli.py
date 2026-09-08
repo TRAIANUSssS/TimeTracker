@@ -57,3 +57,15 @@ def test_cli_cannot_combine_tracking_and_initialization(tmp_path: Path) -> None:
     result = run_cli(tmp_path, "--track", "--init-db")
     assert result.returncode == 2
     assert list(tmp_path.iterdir()) == []
+
+
+def test_cli_validates_api_port_without_starting_collection(tmp_path: Path) -> None:
+    for args in (
+        ("--api-port", "8765"),
+        ("--track", "--api-port", "0"),
+        ("--track", "--api-port", "65536"),
+    ):
+        result = run_cli(tmp_path, *args)
+        assert result.returncode == 2
+        assert "--api-port requires" in result.stderr
+    assert list(tmp_path.iterdir()) == []

@@ -179,3 +179,88 @@ def test_exit_during_collection_waits_for_current_transaction(monkeypatch):
     app._drain()
     assert stopped == [True]
     assert not app._started
+
+
+def test_native_tray_services_http_settings_and_closes_api(tmp_path):
+    script = r"""
+import socket
+import sys
+import threading
+import time
+import httpx
+import win32con
+import win32gui
+from time_tracker.api.server import ApiServer
+from time_tracker.collector import CollectionController
+from time_tracker.domain.events import (
+    TrackerSnapshot, ProcessIdentity, ProcessObservation, ForegroundObservation
+)
+from time_tracker.platform.windows.native import WindowsAPI
+from time_tracker.runtime import TrackerRuntime
+from time_tracker.storage.database import Database
+from time_tracker.tray.tray_app import TrayApplication
+
+class Clock:
+    at = 1788854400000
+    def now_ms(self): return self.at
+class Provider:
+    def snapshot(self):
+        process = ProcessObservation(ProcessIdentity(42, 10), 'C:/Apps/editor.exe')
+        return TrackerSnapshot(clock.at, (process,),
+            ForegroundObservation(process, 1, 'Original'), clock.at)
+clock = Clock()
+provider = Provider()
+database = Database(sys.argv[1])
+runtime = TrackerRuntime(database, provider, clock=clock)
+controller = CollectionController(runtime, provider, clock)
+service = ApiServer(runtime, port=0)
+tray = TrayApplication(controller, WindowsAPI(), show_icon=False, service=service)
+errors = []
+
+def drive():
+    try:
+        deadline = time.monotonic() + 8
+        while not service._server.started:
+            if time.monotonic() > deadline: raise TimeoutError('API startup')
+            time.sleep(0.01)
+        clock.at += 1000
+        with httpx.Client(base_url=service.url, timeout=5, trust_env=False) as client:
+            assert client.get('/applications').json()[0]['track_titles'] is True
+            response = client.patch('/applications/1', json={'track_titles': False})
+            assert response.status_code == 200, response.text
+            assert response.json()['track_titles'] is False
+        clock.at += 1000
+    except BaseException as error:
+        errors.append(error)
+    finally:
+        if tray.hwnd:
+            win32gui.PostMessage(tray.hwnd, win32con.WM_CLOSE, 0, 0)
+
+driver = threading.Thread(target=drive, daemon=True)
+driver.start()
+tray.run()
+driver.join(2)
+assert not driver.is_alive()
+assert not errors, errors
+with database.reader() as connection:
+    titles = [tuple(r) for r in connection.execute(
+        'SELECT window_title,started_at,ended_at FROM foreground_sessions ORDER BY id')]
+    assert titles == [('Original',1788854400000,1788854401000),
+                      (None,1788854401000,1788854402000)], titles
+    assert connection.execute('SELECT exit_reason FROM tracker_runs').fetchone()[0] == 'normal'
+with socket.socket() as connection:
+    assert connection.connect_ex(('127.0.0.1',service.port)) != 0
+print('Native tray API passed')
+"""
+    child = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path / "native-api.db")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=25,
+        env={**os.environ, "PYTHONUTF8": "1"},
+        creationflags=subprocess.CREATE_NO_WINDOW,
+        check=False,
+    )
+    assert child.returncode == 0, child.stdout + child.stderr
+    assert "Native tray API passed" in child.stdout

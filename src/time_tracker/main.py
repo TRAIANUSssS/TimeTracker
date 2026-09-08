@@ -25,14 +25,20 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--database", type=Path, metavar="PATH", help="database path (with --init-db or --track)"
     )
+    parser.add_argument("--api-port", type=int, help="local API port with --track (default: 8765)")
     args = parser.parse_args(argv)
     if args.database is not None and not (args.init_db or args.track):
         parser.error("--database requires --init-db or --track")
+    if args.api_port is not None and (not args.track or not 1 <= args.api_port <= 65535):
+        parser.error("--api-port requires --track and a port in 1..65535")
     if args.track:
         from time_tracker.application import run_windows
 
         try:
-            run_windows(args.database if args.database is not None else default_database_path())
+            run_windows(
+                args.database if args.database is not None else default_database_path(),
+                api_port=args.api_port if args.api_port is not None else 8765,
+            )
         except Exception as error:
             print(f"Tracking failed: {error}", file=sys.stderr)
             return 1
@@ -53,6 +59,7 @@ def main(argv=None) -> int:
         print(
             "Use --track to start Windows collection in the tray. Dashboard is not available yet."
         )
+        print("The local API starts with the tracker at http://127.0.0.1:8765/docs.")
     return 0
 
 

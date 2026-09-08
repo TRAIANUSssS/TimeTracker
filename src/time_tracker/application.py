@@ -7,9 +7,10 @@ from logging.handlers import RotatingFileHandler
 from time_tracker.storage.database import Database
 
 
-def run_windows(database_path):
+def run_windows(database_path, *, api_port=8765):
     if sys.platform != "win32":
         raise RuntimeError("Windows 10/11 is required for activity collection")
+    from time_tracker.api.server import ApiServer
     from time_tracker.collector import CollectionController
     from time_tracker.platform.windows.icons import IconCache
     from time_tracker.platform.windows.native import WindowsAPI
@@ -40,7 +41,7 @@ def run_windows(database_path):
         controller = CollectionController(
             runtime, provider, clock, power_history=PowerHistory() if modern else None
         )
-        TrayApplication(controller, api).run()
+        TrayApplication(controller, api, service=ApiServer(runtime, port=api_port)).run()
     except Exception:
         logger.exception("Application stopped with an error")
         raise
