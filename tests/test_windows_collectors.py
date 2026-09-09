@@ -102,11 +102,157 @@ def test_partial_enumeration_failure_raises_instead_of_returning_incomplete_snap
         collector.snapshot()
 
 
-def test_process_reused_during_metadata_read_is_discarded(processes):
+def test_stale_process_object_is_resolved_using_fresh_identity(processes):
     api, collector = processes
     original = FakeProcess()
     api.items[42] = FakeProcess(creation=2)
-    assert collector.observe(original) is None
+    assert collector.observe(original).identity.creation_time == 2000
+
+
+def test_cache_hit_reads_fresh_identity_but_not_path_or_metadata(processes, monkeypatch):
+    api, collector = processes
+    original = FakeProcess()
+    api.items[42] = original
+    first = collector.snapshot()[0]
+    fresh = FakeProcess()
+    api.items[42] = fresh
+
+    def unwanted(*_):
+        raise AssertionError("Cached executable data should not be requested")
+
+    monkeypatch.setattr(fresh, "exe", unwanted)
+    monkeypatch.setattr(collector, "_metadata", unwanted)
+    assert collector.snapshot()[0] == first
+    assert collector.by_pid(42) == first
+    # Even an old psutil-like object cannot return a cache hit after PID reuse.
+    api.items[42] = FakeProcess(creation=2, path="C:/Apps/new.exe")
+    monkeypatch.setattr(collector, "_metadata", lambda _: ("New", "New Product"))
+    result = collector.observe(original)
+    assert result.identity != first.identity
+    assert result.executable_path.endswith("new.exe")
+
+
+@pytest.mark.parametrize("during", ["path", "metadata"])
+def test_pid_reuse_during_resolution_does_not_publish_stale_data(processes, monkeypatch, during):
+    api, collector = processes
+    original = FakeProcess()
+    api.items[42] = original
+
+    def replace_process(*_):
+        api.items[42] = FakeProcess(creation=2, path="C:/Apps/new.exe")
+        return "C:/Apps/editor.exe" if during == "path" else ("Old", "Old Product")
+
+    if during == "path":
+        monkeypatch.setattr(original, "exe", replace_process)
+    else:
+        monkeypatch.setattr(collector, "_metadata", replace_process)
+    assert collector.snapshot() == ()
+    assert not collector._cache
+
+
+def test_cached_path_survives_temporary_denial_with_confirmed_identity(processes):
+    api, collector = processes
+    api.items[42] = FakeProcess()
+    first = collector.snapshot()[0]
+    api.items[42] = FakeProcess(path=psutil.AccessDenied(42))
+    assert collector.snapshot()[0] == first
+
+
+def test_lost_creation_time_does_not_reuse_confirmed_metadata(processes):
+    api, collector = processes
+    api.items[42] = FakeProcess()
+    first = collector.snapshot()[0]
+    api.items[42] = FakeProcess(creation=psutil.AccessDenied(42), path=psutil.AccessDenied(42))
+    unknown = collector.snapshot()[0]
+    assert unknown.identity != first.identity
+    assert unknown.identity.creation_time is None
+    assert unknown.executable_path is None
+    assert collector.by_pid(42).identity == unknown.identity
+    assert not collector._cache
+    api.items[42] = FakeProcess(creation=2, path="C:/Apps/new.exe")
+    assert collector.snapshot()[0].identity.creation_time == 2000
+
+
+def test_unresolved_path_retry_is_throttled_and_pid_reuse_bypasses_delay(processes):
+    api, _ = processes
+    now = [0.0]
+    collector = ProcessCollector(lambda _: ("App", "Product"), monotonic=lambda: now[0])
+    api.items[42] = FakeProcess(path=psutil.AccessDenied(42))
+    assert collector.snapshot()[0].executable_path is None
+    api.items[42] = FakeProcess()
+    now[0] = 59
+    assert collector.snapshot()[0].executable_path is None
+    now[0] = 60
+    assert collector.snapshot()[0].executable_path is not None
+    api.items[42] = FakeProcess(creation=2, path=psutil.AccessDenied(42))
+    assert collector.snapshot()[0].executable_path is None
+    api.items[42] = FakeProcess(creation=3)
+    assert collector.snapshot()[0].identity.creation_time == 3000
+    assert collector.snapshot()[0].executable_path is not None
+
+
+def test_cache_cleanup_on_disappearance_and_failed_enumeration(processes):
+    api, collector = processes
+    api.items[42] = FakeProcess()
+    first = collector.snapshot()[0]
+    api.fail = True
+    with pytest.raises(OSError):
+        collector.snapshot()
+    assert collector.by_pid(42) == first
+    api.fail = False
+    api.items.clear()
+    assert collector.snapshot() == ()
+    assert not collector._cache
+    assert not collector._identities
+
+
+def test_cached_process_exit_seen_by_foreground_removes_entry(processes):
+    api, collector = processes
+    api.items[42] = FakeProcess()
+    collector.snapshot()
+    api.items.clear()
+    assert collector.by_pid(42) is None
+    assert not collector._cache
+    assert not collector._identities
+
+
+def test_process_exit_during_metadata_read_clears_cache(processes, monkeypatch):
+    api, collector = processes
+    api.items[42] = FakeProcess()
+
+    def exit_process(_):
+        api.items.clear()
+        return "App", "Product"
+
+    monkeypatch.setattr(collector, "_metadata", exit_process)
+    assert collector.by_pid(42) is None
+    assert not collector._cache
+    assert not collector._identities
+
+
+def test_unknown_identity_never_reuses_cached_path(processes):
+    api, collector = processes
+    api.items[42] = FakeProcess(creation=psutil.AccessDenied(42))
+    first = collector.snapshot()[0]
+    api.items[42] = FakeProcess(creation=psutil.AccessDenied(42), path="C:/Apps/other.exe")
+    second = collector.snapshot()[0]
+    assert second.identity == first.identity  # Existing continuity-token behavior.
+    assert second.executable_path != first.executable_path
+
+
+def test_failed_final_identity_check_does_not_cache_new_path(processes, monkeypatch):
+    api, collector = processes
+    api.items[42] = FakeProcess()
+
+    def deny(_):
+        api.items[42] = FakeProcess(creation=psutil.AccessDenied(42))
+        return "App", "Product"
+
+    monkeypatch.setattr(collector, "_metadata", deny)
+    result = collector.snapshot()[0]
+    assert result.executable_path is None
+    assert result.file_description is None
+    assert result.product_name is None
 
 
 def test_native_device_path_is_treated_as_unresolved(processes):
@@ -133,6 +279,68 @@ class FakeDesktop:
     def file_metadata(self, path):
         self.metadata_calls += 1
         return "Editor", "Product"
+
+
+@pytest.mark.parametrize("failure", [OSError("denied"), (None, None), ("Editor", None)])
+def test_metadata_failure_retries_and_preserves_partial_results(processes, monkeypatch, failure):
+    api, _ = processes
+    api.items[42] = FakeProcess()
+    desktop = FakeDesktop()
+    now = [0.0]
+    provider = WindowsProvider(
+        desktop, SimpleNamespace(now_ms=lambda: 1000), monotonic=lambda: now[0]
+    )
+    calls = []
+
+    def read(_):
+        calls.append(now[0])
+        if len(calls) == 1:
+            if isinstance(failure, Exception):
+                raise failure
+            return failure
+        return None, "Recovered"  # Preserve any previous description.
+
+    monkeypatch.setattr(desktop, "file_metadata", read)
+    first = provider.processes.snapshot()[0]
+    now[0] = 59
+    assert provider.processes.snapshot()[0] == first
+    assert len(calls) == 1
+    now[0] = 60
+    recovered = provider.processes.snapshot()[0]
+    assert recovered.identity == first.identity
+    assert recovered.product_name == "Recovered"
+    assert recovered.file_description == first.file_description
+    assert len(calls) == 2
+
+
+def test_metadata_retry_is_shared_by_processes_using_same_executable(processes, monkeypatch):
+    api, _ = processes
+    api.items[42] = FakeProcess()
+    api.items[43] = FakeProcess(pid=43)
+    desktop = FakeDesktop()
+    now = [0.0]
+    metadata_calls, icon_calls = [], []
+
+    def read(path):
+        metadata_calls.append(path)
+        return (None, None) if len(metadata_calls) == 1 else ("App", "Product")
+
+    monkeypatch.setattr(desktop, "file_metadata", read)
+    provider = WindowsProvider(
+        desktop,
+        SimpleNamespace(now_ms=lambda: 1000),
+        monotonic=lambda: now[0],
+        icons=SimpleNamespace(ensure=icon_calls.append),
+    )
+    assert all(p.product_name is None for p in provider.processes.snapshot())
+    assert len(metadata_calls) == len(icon_calls) == 1
+    now[0] = 60
+    assert all(p.product_name == "Product" for p in provider.processes.snapshot())
+    assert len(metadata_calls) == 2
+    assert len(icon_calls) == 1
+    now[0] = 120
+    provider.processes.snapshot()
+    assert len(metadata_calls) == 2
 
 
 def test_provider_reuses_metadata_and_keeps_real_idle_at_startup(processes):
