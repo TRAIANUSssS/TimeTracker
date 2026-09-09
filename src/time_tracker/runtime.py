@@ -6,6 +6,7 @@ import logging
 import time
 
 from time_tracker import __version__
+from time_tracker.diagnostics.performance import measured
 from time_tracker.domain.events import Heartbeat, TrackerEvent, TrackerStarted, TrackerStopping
 from time_tracker.domain.ports import Clock, SnapshotProvider
 from time_tracker.domain.session_manager import SessionManager
@@ -40,6 +41,7 @@ class TrackerRuntime:
     def state(self) -> TrackerState | None:
         return self._manager.state if self._manager is not None else None
 
+    @measured("runtime.start")
     def start(self) -> None:
         if self._manager is not None:
             raise RuntimeError("Runtime is already started")
@@ -54,6 +56,7 @@ class TrackerRuntime:
             raise
         self._manager = manager
 
+    @measured("runtime.handle")
     def handle(self, event: TrackerEvent) -> bool:
         if isinstance(event, (TrackerStarted, TrackerStopping)):
             raise ValueError("Use runtime.start() and runtime.stop() for lifecycle commands")
@@ -67,6 +70,7 @@ class TrackerRuntime:
             raise RuntimeError("Runtime is not started")
         self.handle(Heartbeat(max(self.clock.now_ms(), state.last_event_at)))
 
+    @measured("runtime.stop")
     def stop(self) -> None:
         if self._manager is None:
             return

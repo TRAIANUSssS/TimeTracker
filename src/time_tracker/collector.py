@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import psutil
 
+from time_tracker.diagnostics.performance import measured
 from time_tracker.domain.events import (
     ForegroundChanged,
     Heartbeat,
@@ -141,6 +142,7 @@ class CollectionController:
             self._paused = True
         return latest_sleep_end
 
+    @measured("collector.tick")
     def tick(self):
         if self.power_history is not None and self.monotonic() >= self._next_power:
             self._next_power = self.monotonic() + 2

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
+from time_tracker.diagnostics.performance import measured
 from time_tracker.domain.events import ProcessIdentity
 from time_tracker.domain.models import (
     Application,
@@ -45,6 +46,7 @@ class TrackerState:
     applications: dict[int, Application] = field(default_factory=dict)
     executables: dict[str, Executable] = field(default_factory=dict)
 
+    @measured("state.copy")
     def copy(self) -> TrackerState:
         return replace(
             self,

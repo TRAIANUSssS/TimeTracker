@@ -69,3 +69,10 @@ def test_cli_validates_api_port_without_starting_collection(tmp_path: Path) -> N
         assert result.returncode == 2
         assert "--api-port requires" in result.stderr
     assert list(tmp_path.iterdir()) == []
+
+
+def test_cli_rejects_performance_flags_without_tracking(tmp_path: Path) -> None:
+    for args in (("--perf", "report.jsonl"), ("--perf-detail",)):
+        result = run_cli(tmp_path, *args)
+        assert result.returncode == 2
+    assert list(tmp_path.iterdir()) == []

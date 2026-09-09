@@ -7,6 +7,8 @@ import win32api
 import win32gui
 import win32process
 
+from time_tracker.diagnostics.performance import measured
+
 
 class LastInputInfo(ctypes.Structure):
     _fields_ = [("size", wintypes.UINT), ("tick", wintypes.DWORD)]
@@ -94,12 +96,14 @@ class WindowsAPI:
         if not self.user32.UnregisterSuspendResumeNotification(handle):
             raise ctypes.WinError(ctypes.get_last_error())
 
+    @measured("native.idle")
     def idle_ms(self) -> int:
         info = LastInputInfo(ctypes.sizeof(LastInputInfo), 0)
         if not self.user32.GetLastInputInfo(ctypes.byref(info)):
             raise ctypes.WinError(ctypes.get_last_error())
         return idle_duration(self.kernel32.GetTickCount64(), info.tick)
 
+    @measured("native.lock")
     def is_locked(self) -> bool:
         buffer = ctypes.c_void_p()
         size = wintypes.DWORD()
@@ -119,6 +123,7 @@ class WindowsAPI:
             self.wts.WTSFreeMemory(buffer)
 
     @staticmethod
+    @measured("native.foreground")
     def foreground() -> tuple[int, int, str] | None:
         try:
             hwnd = win32gui.GetForegroundWindow()
@@ -133,6 +138,7 @@ class WindowsAPI:
             raise OSError("Windows foreground window is unavailable") from error
 
     @staticmethod
+    @measured("metadata.read")
     def file_metadata(path: str) -> tuple[str | None, str | None]:
         try:
             translations = win32api.GetFileVersionInfo(path, "\\VarFileInfo\\Translation")

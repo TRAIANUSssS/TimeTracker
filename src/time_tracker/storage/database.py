@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from time_tracker.diagnostics.performance import call, count, span
 from time_tracker.storage.migrations import (
     SCHEMA_VERSION,
     MigrationError,
@@ -23,7 +24,9 @@ class Database:
 
     @contextmanager
     def _connection(self, mode: str) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(
+        connection = call(
+            "sqlite.connect",
+            sqlite3.connect,
             f"{self.path.as_uri()}?mode={mode}",
             uri=True,
             timeout=self.timeout,
@@ -56,7 +59,7 @@ class Database:
     def connection(self, *, read_only: bool = False) -> Iterator[sqlite3.Connection]:
         """Open an initialized database; this never creates a missing file."""
         with self._connection("ro" if read_only else "rw") as connection:
-            if validate_database(connection) != SCHEMA_VERSION:
+            if call("sqlite.validate_schema", validate_database, connection) != SCHEMA_VERSION:
                 raise MigrationError(
                     "Unsupported schema; initialize with the matching version first"
                 )
@@ -66,7 +69,8 @@ class Database:
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        with self.connection() as connection, transaction(connection):
+        count("sqlite.transactions")
+        with span("sqlite.transaction"), self.connection() as connection, transaction(connection):
             yield connection
 
     @contextmanager

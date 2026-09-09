@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from xml.etree import ElementTree
 
+from time_tracker.diagnostics.performance import call, count, measured
+
 NS = {"e": "http://schemas.microsoft.com/win/2004/08/events/event"}
 
 
@@ -14,6 +16,7 @@ class PowerRecord:
     at: int
 
 
+@measured("power.parse")
 def parse_record(xml: str) -> PowerRecord:
     system = ElementTree.fromstring(xml).find("e:System", NS)
     provider = system.find("e:Provider", NS)
@@ -47,6 +50,7 @@ def completed_periods(records: tuple[PowerRecord, ...], since: int):
 
 
 class PowerHistory:
+    @measured("power.read")
     def read(self, since: int) -> tuple[tuple[tuple[int, int], ...], bool]:
         import win32evtlog
 
@@ -57,11 +61,17 @@ class PowerHistory:
             "(EventID=506 or EventID=507 or EventID=42 or EventID=107) and "
             f"TimeCreated[@SystemTime >= '{timestamp}']]]"
         )
-        handle = win32evtlog.EvtQuery("System", win32evtlog.EvtQueryForwardDirection, query)
+        handle = call(
+            "power.query",
+            win32evtlog.EvtQuery,
+            "System",
+            win32evtlog.EvtQueryForwardDirection,
+            query,
+        )
         records = []
         try:
             while True:
-                batch = win32evtlog.EvtNext(handle, 32)
+                batch = call("power.next", win32evtlog.EvtNext, handle, 32)
                 if not batch:
                     break
                 try:
@@ -76,4 +86,5 @@ class PowerHistory:
                         event.Close()
         finally:
             handle.Close()
+        count("power.records", len(records))
         return completed_periods(tuple(records), since)

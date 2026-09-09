@@ -26,15 +26,24 @@ def main(argv=None) -> int:
         "--database", type=Path, metavar="PATH", help="database path (with --init-db or --track)"
     )
     parser.add_argument("--api-port", type=int, help="local API port with --track (default: 8765)")
+    parser.add_argument("--perf", type=Path, metavar="JSONL", help="write new performance report")
+    parser.add_argument("--perf-detail", action="store_true", help="include per-process timings")
     args = parser.parse_args(argv)
+    if args.perf is not None and not args.track:
+        parser.error("--perf requires --track")
+    if args.perf_detail and args.perf is None:
+        parser.error("--perf-detail requires --perf")
     if args.database is not None and not (args.init_db or args.track):
         parser.error("--database requires --init-db or --track")
     if args.api_port is not None and (not args.track or not 1 <= args.api_port <= 65535):
         parser.error("--api-port requires --track and a port in 1..65535")
     if args.track:
         from time_tracker.application import run_windows
+        from time_tracker.diagnostics import performance
 
         try:
+            if args.perf is not None:
+                performance.configure(args.perf, detailed=args.perf_detail)
             run_windows(
                 args.database if args.database is not None else default_database_path(),
                 api_port=args.api_port if args.api_port is not None else 8765,
@@ -42,6 +51,8 @@ def main(argv=None) -> int:
         except Exception as error:
             print(f"Tracking failed: {error}", file=sys.stderr)
             return 1
+        finally:
+            performance.shutdown()
         return 0
     if args.init_db:
         try:

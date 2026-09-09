@@ -4,6 +4,7 @@ import logging
 
 import psutil
 
+from time_tracker.diagnostics.performance import count, measured
 from time_tracker.domain.events import ForegroundObservation, TrackerSnapshot
 from time_tracker.platform.windows.processes import ProcessCollector
 
@@ -18,8 +19,10 @@ class WindowsProvider:
         self._metadata = {}
         self.processes = ProcessCollector(self.metadata)
 
+    @measured("metadata.resolve", detailed=True)
     def metadata(self, path):
         if path not in self._metadata:
+            count("metadata.miss", detailed=True)
             if self.icons is not None:
                 self.icons.ensure(path)
             try:
@@ -27,8 +30,11 @@ class WindowsProvider:
             except OSError:
                 logger.warning("Executable metadata unavailable", exc_info=True)
                 self._metadata[path] = (None, None)
+        else:
+            count("metadata.hit", detailed=True)
         return self._metadata[path]
 
+    @measured("foreground.resolve")
     def foreground(self):
         try:
             window = self.api.foreground()
@@ -47,6 +53,7 @@ class WindowsProvider:
             logger.warning("Foreground observation unavailable")
             return None
 
+    @measured("provider.snapshot")
     def snapshot(self):
         processes = self.processes.snapshot()
         locked = self.api.is_locked()

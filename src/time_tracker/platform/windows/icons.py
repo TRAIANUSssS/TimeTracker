@@ -7,6 +7,8 @@ from pathlib import Path
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
+from time_tracker.diagnostics.performance import measured
+
 logger = logging.getLogger(__name__)
 ICON_RENDER_VERSION = "2"
 
@@ -20,6 +22,7 @@ class IconCache:
         self.directory = directory
         self._attempted = set()
 
+    @measured("icons.ensure")
     def ensure(self, path: str) -> Path | None:
         destination = self.directory / f"{icon_key(path)}.png"
         if path in self._attempted:

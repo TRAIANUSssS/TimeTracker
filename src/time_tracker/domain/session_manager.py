@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import replace
 from threading import get_ident
 
+from time_tracker.diagnostics.performance import count, measured
 from time_tracker.domain.events import (
     ApplicationSettingsChanged,
     ForegroundChanged,
@@ -122,8 +123,10 @@ class SessionManager:
             logger.info("Recovered run %s at %s", previous.id, previous.recovery_at)
         logger.info("Started run %s in %s", state.run.id, state.flags.effective)
 
+    @measured("manager.handle")
     def handle(self, event: TrackerEvent) -> bool:
         """Return False for stale observations. Effective idle boundaries may be backdated."""
+        count("event." + event.kind)
         self._check_owner()
         if isinstance(event, TrackerStarted):
             self._check_snapshot_time(event.observed_at, event.snapshot)
