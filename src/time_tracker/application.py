@@ -7,12 +7,13 @@ from logging.handlers import RotatingFileHandler
 from time_tracker.storage.database import Database
 
 
-def run_windows(database_path, *, api_port=8765):
+def run_windows(database_path, *, api_port=8765, process_events=None):
     if sys.platform != "win32":
         raise RuntimeError("Windows 10/11 is required for activity collection")
     from time_tracker.api.server import ApiServer
     from time_tracker.collector import CollectionController
     from time_tracker.platform.windows.autostart import Autostart
+    from time_tracker.platform.windows.event_source import ProcessEventSource
     from time_tracker.platform.windows.icons import IconCache
     from time_tracker.platform.windows.native import WindowsAPI
     from time_tracker.platform.windows.power_history import PowerHistory
@@ -40,7 +41,13 @@ def run_windows(database_path, *, api_port=8765):
             "Sleep boundary source: %s", "Kernel-Power" if modern else "Windows notifications"
         )
         controller = CollectionController(
-            runtime, provider, clock, power_history=PowerHistory() if modern else None
+            runtime,
+            provider,
+            clock,
+            power_history=PowerHistory() if modern else None,
+            process_events=ProcessEventSource(process_events)
+            if process_events is not None
+            else None,
         )
         TrayApplication(
             controller,

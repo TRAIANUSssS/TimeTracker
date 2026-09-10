@@ -116,6 +116,7 @@ class FakeConsumer:
             "events_lost": 0,
             "buffers_lost": 0,
             "source_done": self.done.is_set(),
+            "last_sequence": 0,
         }
 
 
@@ -291,5 +292,14 @@ def test_stream_clean_drain_is_not_a_data_gap():
             "data_complete": True,
         }
     )
-    stream.accept(envelope | {"type": "stopped", "message_sequence": 3})
+    stream.accept(
+        envelope
+        | {
+            "type": "stopped",
+            "message_sequence": 3,
+            "last_sequence": 0,
+            "cleanup_confirmed": True,
+            "data_complete": True,
+        }
+    )
     assert stream.stopped and not stream.gap and not stream.healthy

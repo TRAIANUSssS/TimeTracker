@@ -171,6 +171,12 @@ class CollectionWorker:
             self.controller.runtime.abort()
         finally:
             try:
+                if hasattr(self.controller, "close_sources"):
+                    self.controller.close_sources()
+            except BaseException as error:
+                self.error = self.error or error
+                logger.exception("Process event source shutdown failed")
+            try:
                 if self.service is not None:
                     self.service.stop()
             except BaseException as error:

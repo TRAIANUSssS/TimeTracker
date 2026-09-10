@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections import deque
 from dataclasses import replace
 
 import psutil
@@ -11,6 +12,7 @@ from time_tracker.domain.events import (
     ForegroundChanged,
     Heartbeat,
     IdleObserved,
+    ProcessBoundaryRecorded,
     ProcessesObserved,
     ResumeNotified,
     SessionLocked,
@@ -29,7 +31,17 @@ class ObservationInterrupted(Exception):
 
 
 class CollectionController:
-    def __init__(self, runtime, provider, clock, *, monotonic=time.monotonic, power_history=None):
+    def __init__(
+        self,
+        runtime,
+        provider,
+        clock,
+        *,
+        monotonic=time.monotonic,
+        power_history=None,
+        process_events=None,
+        shutdown_timeout=20.0,
+    ):
         self.runtime = runtime
         self.provider = provider
         self.clock = clock
@@ -46,18 +58,101 @@ class CollectionController:
         self._user_resumed = False
         self.checkpoint = lambda: None
         self.startup_snapshot_filter = None
+        self.process_events = process_events
+        self._event_generation = None
+        self._event_healthy = False
+        self._event_pending = deque()
+        if shutdown_timeout <= 0:
+            raise ValueError("Positive shutdown timeout required")
+        self.shutdown_timeout = shutdown_timeout
+        self.shutdown_complete = None
+        self.shutdown_at = None
+        self.shutdown_events = 0
 
     def start(self):
+        self.shutdown_complete = None
+        self.shutdown_at = None
+        self.shutdown_events = 0
+        self._event_pending.clear()
+        self._event_generation = None
+        self._event_healthy = False
+        if self.process_events is not None:
+            self.process_events.start()
         if self.power_history is not None:
             self.power_history.read(
                 self.clock.now_ms()
             )  # Fail visibly if System log is inaccessible.
-        self.runtime.start(snapshot_filter=self.startup_snapshot_filter)
+        if self.process_events is None:
+            self.runtime.start(snapshot_filter=self.startup_snapshot_filter)
+        else:
+            # Begin the run before the full process scan; buffered short processes
+            # during that scan then belong to a real run and can be recorded later.
+            self.runtime.start(
+                snapshot_filter=self.startup_snapshot_filter, snapshot=self.provider.user_snapshot()
+            )
         self._recorded_power.clear()
         self._pending_resume = None
         self._power_open = self._paused = self._user_resumed = False
         self._next_power = 0
         self._reset_deadlines()
+        if self.process_events is not None:
+            self._next_process = self._next_fast = 0
+
+    def _process_events(self, *, cutoff=None, deadline=None):
+        if self.process_events is None:
+            return
+        if not self._event_pending:
+            generation, coverage, healthy, records = self.process_events.poll()
+            if (generation, healthy) != (self._event_generation, self._event_healthy):
+                self._next_process = 0
+                count("process_events.connected" if healthy else "process_events.fallback")
+                logger.info(
+                    "Process event source: %s", "connected" if healthy else "polling fallback"
+                )
+            self._event_generation, self._event_healthy = generation, healthy
+            self._event_pending.extend((record, coverage) for record in records)
+        while self._event_pending:
+            if deadline is not None and time.monotonic() >= deadline:
+                return
+            record, coverage = self._event_pending[0]
+            if cutoff is not None and record["generated_at_ns"] // 1_000_000 > cutoff:
+                self._event_pending.popleft()
+                continue
+            try:
+                process = self.provider.event_process(record)
+            except (OSError, psutil.Error, ValueError, KeyError):
+                self.process_events.invalidate()
+                self._event_pending.clear()
+                self._event_healthy = False
+                self._next_process = 0
+                count("process_events.invalid")
+                logger.warning("Process event could not be normalized; reverting to polling")
+                break
+            boundary = record["generated_at_ns"] // 1_000_000
+            # Creation is rounded to the domain's ms precision, like psutil snapshots.
+            boundary = max(boundary, process.identity.creation_time)
+            at = (
+                cutoff
+                if cutoff is not None
+                else max(self.clock.now_ms(), self.runtime.state.last_event_at)
+            )
+            if cutoff is not None and boundary > cutoff:
+                self._event_pending.popleft()
+                continue
+            if boundary > at or coverage > at:
+                self.process_events.invalidate()
+                self._event_pending.clear()
+                self._event_healthy = False
+                self._next_process = 0
+                break
+            self._handle(
+                ProcessBoundaryRecorded(at, process, boundary, record["kind"] == "start", coverage)
+            )
+            self._event_pending.popleft()
+            count("process_events.handled")
+            if cutoff is not None:
+                self.shutdown_events += 1
+                count("process_events.shutdown_handled")
 
     def _reset_deadlines(self):
         now = self.monotonic()
@@ -178,6 +273,7 @@ class CollectionController:
     @measured("collector.tick")
     def tick(self):
         self.checkpoint()
+        self._process_events()
         if self.power_history is not None and self.monotonic() >= self._next_power:
             self._next_power = self.monotonic() + 2
             self._sync_power()
@@ -196,10 +292,11 @@ class CollectionController:
         if at < self.runtime.state.last_event_at:
             return
         if now >= self._next_process:
-            self._next_process = now + 5
+            self._next_process = now + (60 if self._event_healthy else 5)
             try:
                 processes = self.provider.processes.snapshot()
             except (OSError, psutil.Error):
+                self._next_process = now + 5
                 logger.warning("Process poll failed; retaining the previous process set")
             else:
                 self._handle(ProcessesObserved(self.clock.now_ms(), processes))
@@ -229,4 +326,32 @@ class CollectionController:
     def stop(self):
         if self.power_history is not None:
             self._sync_power()
-        self.runtime.stop()
+        if self.process_events is None:
+            self.runtime.stop()
+            return
+        # Waiting for ETW flush must not extend the user's tracked time.
+        self.shutdown_at = max(self.clock.now_ms(), self.runtime.state.last_event_at)
+        self.shutdown_complete = False
+        deadline = time.monotonic() + self.shutdown_timeout
+        self.process_events.begin_finish()
+        while time.monotonic() < deadline:
+            self._process_events(cutoff=self.shutdown_at, deadline=deadline)
+            done, complete, pending = self.process_events.finish_status()
+            if done and not pending and not self._event_pending:
+                self.shutdown_complete = complete
+                break
+            if not pending and not self._event_pending:
+                time.sleep(0.02)
+        reason = "normal" if self.shutdown_complete else "events_incomplete"
+        count(
+            "process_events.shutdown_complete"
+            if self.shutdown_complete
+            else "process_events.shutdown_incomplete"
+        )
+        if not self.shutdown_complete:
+            logger.warning("ETW final delivery unconfirmed; closing run as events_incomplete")
+        self.runtime.stop(at=self.shutdown_at, reason=reason)
+
+    def close_sources(self):
+        if self.process_events is not None:
+            self.process_events.close()

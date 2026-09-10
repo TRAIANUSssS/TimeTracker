@@ -58,6 +58,7 @@ class ForegroundSession:
     window_title: str | None
     started_at: int
     ended_at: int | None
+    process_session_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

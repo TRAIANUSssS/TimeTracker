@@ -50,6 +50,7 @@ class EventType(StrEnum):
     TRACKER_STOPPING = "TRACKER_STOPPING"
     PROCESS_STARTED = "PROCESS_STARTED"
     PROCESS_STOPPED = "PROCESS_STOPPED"
+    PROCESS_BOUNDARY_RECORDED = "PROCESS_BOUNDARY_RECORDED"
     PROCESSES_OBSERVED = "PROCESSES_OBSERVED"
     FOREGROUND_CHANGED = "FOREGROUND_CHANGED"
     IDLE_OBSERVED = "IDLE_OBSERVED"
@@ -80,6 +81,7 @@ class TrackerStarted(TrackerEvent):
 
 @dataclass(frozen=True, slots=True)
 class TrackerStopping(TrackerEvent):
+    reason: str = "normal"
     kind: ClassVar[EventType] = EventType.TRACKER_STOPPING
 
 
@@ -93,6 +95,17 @@ class ProcessStarted(TrackerEvent):
 class ProcessStopped(TrackerEvent):
     identity: ProcessIdentity
     kind: ClassVar[EventType] = EventType.PROCESS_STOPPED
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessBoundaryRecorded(TrackerEvent):
+    """Authoritative lifecycle time, delivered later than other observations."""
+
+    process: ProcessObservation
+    boundary_at: int
+    started: bool
+    coverage_at: int
+    kind: ClassVar[EventType] = EventType.PROCESS_BOUNDARY_RECORDED
 
 
 @dataclass(frozen=True, slots=True)

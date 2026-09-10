@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from time_tracker.storage.migrations import SCHEMA_VERSION
+
 
 def run_cli(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -23,11 +25,11 @@ def test_cli_initializes_requested_database_and_can_run_twice(tmp_path: Path) ->
     for _ in range(2):
         result = run_cli(tmp_path, "--init-db", "--database", str(path))
         assert result.returncode == 0, result.stderr
-        assert "schema version 1" in result.stdout
+        assert f"schema version {SCHEMA_VERSION}" in result.stdout
     connection = sqlite3.connect(path)
     try:
         assert connection.execute("SELECT COUNT(*) FROM tracker_runs").fetchone()[0] == 0
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     finally:
         connection.close()
 

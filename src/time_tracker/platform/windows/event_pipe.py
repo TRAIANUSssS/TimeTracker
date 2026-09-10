@@ -1,4 +1,4 @@
-"""Local, current-user-only, one-way JSON event transport with bounded I/O."""
+"""Local, current-user-only JSON transport with bounded I/O and finish control."""
 
 import json
 import re
@@ -121,17 +121,18 @@ class EventPipeServer(EventPipe):
         security = pywintypes.SECURITY_ATTRIBUTES()
         security.SECURITY_DESCRIPTOR = (
             win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
-                f"D:P(A;;GA;;;SY)(A;;GA;;;{user_sid()})", win32security.SDDL_REVISION_1
+                f"D:P(A;;GA;;;SY)(A;;GA;;;{user_sid()})S:(ML;;NW;;;ME)",
+                win32security.SDDL_REVISION_1,
             )
         )
         super().__init__(
             win32pipe.CreateNamedPipe(
                 name,
-                win32pipe.PIPE_ACCESS_OUTBOUND | win32file.FILE_FLAG_OVERLAPPED | 0x00080000,
+                win32pipe.PIPE_ACCESS_DUPLEX | win32file.FILE_FLAG_OVERLAPPED | 0x00080000,
                 win32pipe.PIPE_TYPE_BYTE | 0x8,
                 1,  # FIRST_PIPE_INSTANCE and PIPE_REJECT_REMOTE_CLIENTS above
                 65536,
-                0,
+                4096,
                 1000,
                 security,
             )
@@ -147,13 +148,16 @@ class EventPipeServer(EventPipe):
         if count != len(data):
             raise OSError("Incomplete event frame write")
 
+    def receive_control(self, timeout_ms=250):
+        return EventPipeClient.receive(self, timeout_ms, max_frame=4096)
+
 
 class EventPipeClient(EventPipe):
-    def __init__(self, channel="default"):
+    def __init__(self, channel="default", *, control=False):
         super().__init__(
             win32file.CreateFile(
                 pipe_name(channel),
-                win32con.GENERIC_READ,
+                win32con.GENERIC_READ | (0x2 if control else 0),  # FILE_WRITE_DATA only
                 0,
                 None,
                 win32con.OPEN_EXISTING,
@@ -162,7 +166,12 @@ class EventPipeClient(EventPipe):
             )
         )
 
-    def receive(self, timeout_ms=5000):
+    def request_finish(self, stream_id):
+        EventPipeServer.send(
+            self, {"schema_version": 1, "type": "finish", "stream_id": stream_id}, 500
+        )
+
+    def receive(self, timeout_ms=5000, *, max_frame=MAX_FRAME):
         deadline = time.monotonic() + timeout_ms / 1000
         received_any = False
 
@@ -186,7 +195,7 @@ class EventPipeClient(EventPipe):
 
         try:
             size = struct.unpack("<I", read_exact(4))[0]
-            if not 1 <= size <= MAX_FRAME:
+            if not 1 <= size <= max_frame:
                 raise ValueError("Invalid event frame size")
             return decode_frame(read_exact(size))
         except BaseException:

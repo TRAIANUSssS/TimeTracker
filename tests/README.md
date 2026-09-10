@@ -8,6 +8,12 @@
 
 Текущее покрытие хранения, ядра, Windows-интеграции и API:
 
+`test_etw_shutdown.py` проверяет завершение ETW через настоящий локальный канал и
+отдельную SQLite без повышения прав: финальный буфер, несколько пачек, cutoff времени,
+разрыв/тайм-аут, гонку подключения, естественное завершение и проверку управляющей команды.
+Проверка реального ETW при выходе: `tools/check_etw_integration.py --stop-early`;
+порядок запуска сборщика описан в [etw-integration.md](../docs/etw-integration.md).
+
 Кеш процессов дополнительно проверяется в `test_windows_collectors.py`: свежая
 identity при попадании в кеш, stale psutil-объект, PID reuse во время exe/metadata,
 исчезновение, утрата/восстановление доступа, очистка кеша и общий retry metadata
@@ -128,6 +134,13 @@ events ещё не подключены; доступность на ПК про
 читатель, частичный фрейм, конфликт каналов, cleanup, сохранение пути и identity,
 потери и последовательности. Live-проверка повышенного сборщика с обычным читателем:
 [инструкция](../docs/etw-collector.md), `tools/check_etw_collector.py`.
+
+`test_process_event_integration.py`: 18 сценариев ETW → worker → SessionManager:
+поздние/переставленные события, короткие сессии, PID reuse, история foreground,
+running union, rollback, 60/5 s, checkpoint, reconnect, переполнение и реальный pipe.
+`test_database.py` дополнительно проверяет миграцию 1 → 2 с сохранением истории.
+Полный live-путь проверяет `tools/check_etw_integration.py` на отдельной БД;
+см. [инструкцию](../docs/etw-integration.md).
 
 Packaged smoke отдельно прошёл на текущем Windows 11 x64. Браузерные скриншоты
 с искусственными данными и скриншот настоящего exe сохраняются в

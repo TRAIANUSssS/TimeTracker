@@ -1,5 +1,9 @@
 """Validate generations and sequence continuity before handing records to a caller."""
 
+from collections import OrderedDict
+
+from time_tracker.domain.identity import process_creation_ms
+
 
 class EventStream:
     def __init__(self):
@@ -9,6 +13,8 @@ class EventStream:
         self.gap = False
         self.healthy = False
         self.stopped = False
+        self.complete = False
+        self._identities = OrderedDict()
 
     def accept(self, message):
         try:
@@ -54,10 +60,32 @@ class EventStream:
             creation = record.get("creation_time_ns")
             if type(creation) is not int or creation < 0:
                 self.gap = True  # no PID-only fallback for missing identity
+            else:
+                previous = self._identities.get(record["pid"])
+                if (
+                    previous is not None
+                    and previous != creation
+                    and (process_creation_ms(previous) == process_creation_ms(creation))
+                ):
+                    self.gap = True  # ms schema cannot safely represent this PID reuse
+                self._identities[record["pid"]] = creation
+                self._identities.move_to_end(record["pid"])
+                if len(self._identities) > 4096:
+                    self._identities.popitem(last=False)
             if record["kind"] == "start" and not isinstance(record.get("image_name"), str):
                 self.gap = True
         if kind in ("batch", "draining") and message.get("data_complete") is not True:
             self.gap = True
         self.stopped = kind == "stopped"
+        if self.stopped:
+            self.complete = (
+                message.get("cleanup_confirmed") is True
+                and message.get("data_complete") is True
+                and type(message.get("last_sequence")) is int
+                and message["last_sequence"] == self.record_sequence
+                and not self.gap
+            )
+            if not self.complete:
+                self.gap = True
         self.healthy = kind == "batch" and message.get("healthy") is True and not self.gap
         return records

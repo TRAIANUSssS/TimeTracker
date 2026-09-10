@@ -15,6 +15,7 @@ from time_tracker.domain.events import (
     IdleEnded,
     IdleObserved,
     IdleStarted,
+    ProcessBoundaryRecorded,
     ProcessesObserved,
     ProcessIdentity,
     ProcessObservation,
@@ -144,7 +145,7 @@ class SessionManager:
         with self._store.transaction() as root:
             repo = root.for_run(state.run.id)
             if isinstance(event, TrackerStopping):
-                self._shutdown(state, repo, event.observed_at)
+                self._shutdown(state, repo, event.observed_at, event.reason)
             else:
                 self._dispatch(state, repo, event)
                 self._sync_running(state, repo, event.observed_at)
@@ -182,6 +183,8 @@ class SessionManager:
                 open_foreground = repo.foreground.list_open()
                 if not open_foreground or open_foreground[0].id != state.foreground.session.id:
                     state.foreground = None
+        elif isinstance(event, ProcessBoundaryRecorded):
+            self._process_boundary(state, repo, event)
         elif isinstance(event, ResumeNotified):
             flags = replace(state.flags, is_sleeping=False)
             if event.unlocked:
@@ -371,9 +374,78 @@ class SessionManager:
         for observation in observations:
             self._observe_process(state, repo, observation, at)
         if complete:
+            state.last_process_snapshot_at = at
             for identity in list(state.running_processes):
                 if identity not in seen:
                     self._remove_process(state, repo, identity, at)
+
+    def _process_boundary(self, state, repo, event):
+        identity = event.process.identity
+        if identity.creation_time is None:
+            raise ValueError("Process events require a confirmed creation time")
+        at, boundary = event.observed_at, event.boundary_at
+        if boundary > at or event.coverage_at > at:
+            raise ValueError("Process boundary cannot be in the future")
+        if boundary < state.run.started_at:
+            return
+        current = state.running_processes.get(identity)
+        executable = self._executable(state, repo, event.process, at)
+        affected = {}
+        absent_at = None
+        if current is None and identity.creation_time <= state.last_process_snapshot_at:
+            absent_at = state.last_process_snapshot_at
+        if event.started:
+            for other, process in list(state.running_processes.items()):
+                if other.pid != identity.pid or other == identity:
+                    continue
+                if other.creation_time is not None and other.creation_time > identity.creation_time:
+                    absent_at = min(absent_at or at, other.creation_time)
+                else:
+                    if process.application_id is not None:
+                        affected[process.application_id] = process.session.detected_at
+                    self._remove_process(
+                        state, repo, other, max(process.session.detected_at, boundary)
+                    )
+        session = repo.processes.record_boundary(
+            pid=identity.pid,
+            creation=identity.creation_time,
+            boundary=boundary,
+            started=event.started,
+            coverage=event.coverage_at,
+            at=at,
+            executable_id=executable.id if executable else None,
+            absent_at=absent_at,
+        )
+        if session is None:
+            return
+        if session.executable_id is not None:
+            executable = repo.executables.get(session.executable_id)
+            affected[executable.application_id] = min(
+                affected.get(executable.application_id, session.detected_at), session.detected_at
+            )
+        if session.ended_at is None:
+            state.running_processes[identity] = ProcessRuntime(
+                session, executable.application_id if executable else None, executable, at
+            )
+        else:
+            if current is not None and current.session.id == session.id:
+                state.running_processes.pop(identity, None)
+            repo.foreground.clip_process(session.id, ended_at=session.ended_at, at=at)
+            if (
+                state.foreground is not None
+                and state.foreground.session.process_session_id == session.id
+            ):
+                state.foreground = None
+        if executable is not None:
+            state.executables[executable.path] = repo.executables.touch(
+                executable.id, at=session.ended_at or boundary
+            )
+        for app_id, since in affected.items():
+            opened = repo.running.rebuild(app_id, since=since, at=at)
+            if opened is None:
+                state.open_running_sessions.pop(app_id, None)
+            else:
+                state.open_running_sessions[app_id] = opened
 
     @staticmethod
     def _sync_running(state: TrackerState, repo: TrackerRepositories, at: int) -> None:
@@ -426,7 +498,9 @@ class SessionManager:
                 previous.executable_id,
                 previous.hwnd,
                 previous.window_title,
-            ) == (app.id, process.executable.id, observation.hwnd, title):
+            ) == (app.id, process.executable.id, observation.hwnd, title) and (
+                previous.process_session_id == process.session.id
+            ):
                 state.foreground = replace(state.foreground, identity=observation.process.identity)
                 return
         self._clear_foreground(state, repo, at)
@@ -438,6 +512,7 @@ class SessionManager:
                 executable_id=process.executable.id,
                 hwnd=observation.hwnd,
                 window_title=title,
+                process_session_id=process.session.id,
             ),
         )
 
@@ -478,13 +553,16 @@ class SessionManager:
                     executable_id=foreground.session.executable_id,
                     hwnd=foreground.session.hwnd,
                     window_title=None,
+                    process_session_id=foreground.session.process_session_id,
                 ),
             )
 
-    def _shutdown(self, state: TrackerState, repo: TrackerRepositories, at: int) -> None:
+    def _shutdown(
+        self, state: TrackerState, repo: TrackerRepositories, at: int, reason: str
+    ) -> None:
         self._clear_foreground(state, repo, at)
         for identity in list(state.running_processes):
             self._remove_process(state, repo, identity, at)
         self._sync_running(state, repo, at)
         repo.system_states.end(state.system_session.id, at=at)
-        repo.runs.finish(state.run.id, at=at, reason="normal")
+        repo.runs.finish(state.run.id, at=at, reason=reason)

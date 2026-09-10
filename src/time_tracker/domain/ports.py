@@ -33,6 +33,7 @@ class Applications(Protocol):
 
 
 class Executables(Protocol):
+    def get(self, record_id: int) -> Executable | None: ...
     def find_by_path(self, path: str) -> Executable | None: ...
     def create(self, application_id: int, path: str, *, at: int) -> Executable: ...
     def touch(self, executable_id: int, *, at: int) -> Executable: ...
@@ -53,6 +54,18 @@ class Sessions[T](Protocol):
 
 
 class Processes(Sessions[ProcessSession], Protocol):
+    def record_boundary(
+        self,
+        *,
+        pid: int,
+        creation: int,
+        boundary: int,
+        started: bool,
+        coverage: int,
+        at: int,
+        executable_id: int | None,
+        absent_at: int | None,
+    ) -> ProcessSession | None: ...
     def start(
         self,
         *,
@@ -74,9 +87,13 @@ class Processes(Sessions[ProcessSession], Protocol):
 
 class Running(Sessions[ApplicationRunningSession], Protocol):
     def start(self, application_id: int, *, at: int) -> ApplicationRunningSession: ...
+    def rebuild(
+        self, application_id: int, *, since: int, at: int
+    ) -> ApplicationRunningSession | None: ...
 
 
 class Foreground(Sessions[ForegroundSession], Protocol):
+    def clip_process(self, process_session_id: int, *, ended_at: int, at: int) -> None: ...
     def start(
         self,
         application_id: int,
@@ -85,6 +102,7 @@ class Foreground(Sessions[ForegroundSession], Protocol):
         executable_id: int | None = None,
         hwnd: int | None = None,
         window_title: str | None = None,
+        process_session_id: int | None = None,
     ) -> ForegroundSession: ...
 
 

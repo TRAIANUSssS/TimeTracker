@@ -1,6 +1,7 @@
 """Command-line and console-free entry points."""
 
 import argparse
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -28,7 +29,16 @@ def main(argv=None) -> int:
     parser.add_argument("--api-port", type=int, help="local API port with --track (default: 8765)")
     parser.add_argument("--perf", type=Path, metavar="JSONL", help="write new performance report")
     parser.add_argument("--perf-detail", action="store_true", help="include per-process timings")
+    parser.add_argument(
+        "--process-events", metavar="CHANNEL", help="connect to a standalone ETW collector"
+    )
     args = parser.parse_args(argv)
+    if args.process_events is not None and not args.track:
+        parser.error("--process-events requires --track")
+    if args.process_events is not None and not re.fullmatch(
+        r"[a-zA-Z0-9_-]{1,64}", args.process_events
+    ):
+        parser.error("Invalid process event channel")
     if args.perf is not None and not args.track:
         parser.error("--perf requires --track")
     if args.perf_detail and args.perf is None:
@@ -47,6 +57,11 @@ def main(argv=None) -> int:
             run_windows(
                 args.database if args.database is not None else default_database_path(),
                 api_port=args.api_port if args.api_port is not None else 8765,
+                **(
+                    {"process_events": args.process_events}
+                    if args.process_events is not None
+                    else {}
+                ),
             )
         except Exception as error:
             print(f"Tracking failed: {error}", file=sys.stderr)

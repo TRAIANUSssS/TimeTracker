@@ -6,7 +6,13 @@ import time
 import psutil
 
 from time_tracker.diagnostics.performance import count, measured
-from time_tracker.domain.events import ForegroundObservation, TrackerSnapshot
+from time_tracker.domain.events import (
+    ForegroundObservation,
+    ProcessIdentity,
+    ProcessObservation,
+    TrackerSnapshot,
+)
+from time_tracker.domain.identity import normalize_executable_path, process_creation_ms
 from time_tracker.platform.windows.processes import ProcessCollector
 
 logger = logging.getLogger(__name__)
@@ -21,6 +27,38 @@ class WindowsProvider:
         self._metadata_retry_at = {}
         self._monotonic = monotonic
         self.processes = ProcessCollector(self.metadata, monotonic=monotonic)
+        self._device_paths = {}
+
+    def event_process(self, record):
+        """Resolve an ETW image without reopening its potentially dead/reused PID."""
+        creation = record["creation_time_ns"]
+        identity = ProcessIdentity(record["pid"], process_creation_ms(creation))
+        if record["kind"] == "stop":
+            return ProcessObservation(identity)
+        path = record["image_name"]
+        if path.startswith("\\??\\"):
+            path = path[4:]
+        if path.lower().startswith("\\device\\"):
+            import pywintypes
+            import win32api
+            import win32file
+
+            # Device mappings may change after mounting a volume; refresh on misses.
+            if not any(path.lower().startswith(device + "\\") for device in self._device_paths):
+                for drive in win32api.GetLogicalDriveStrings().split("\0"):
+                    if drive:
+                        try:
+                            device = win32file.QueryDosDevice(drive[:2]).split("\0")[0]
+                            self._device_paths[device.lower()] = drive[:2]
+                        except pywintypes.error:
+                            continue
+            for device, drive in sorted(self._device_paths.items(), key=lambda pair: -len(pair[0])):
+                if path.lower().startswith(device + "\\"):
+                    path = drive + path[len(device) :]
+                    break
+        path = normalize_executable_path(path)
+        description, product = self.metadata(path)
+        return ProcessObservation(identity, path, description, product)
 
     @measured("metadata.resolve", detailed=True)
     def metadata(self, path):

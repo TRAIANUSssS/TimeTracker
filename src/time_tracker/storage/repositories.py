@@ -255,6 +255,62 @@ class ProcessSessionRepository(_SessionRecords[ProcessSession]):
     model = ProcessSession
     start_column = "detected_at"
 
+    def record_boundary(
+        self,
+        *,
+        pid,
+        creation,
+        boundary,
+        started,
+        coverage,
+        at,
+        executable_id,
+        absent_at,
+    ):
+        """Refine one identity inside the current run, including already closed rows."""
+        with transaction(self.connection):
+            run_start = self._run_start(at)
+            if creation > at or boundary > at or boundary < creation:
+                raise ValueError("Invalid process boundary")
+            order = "ASC" if started else "DESC"
+            row = self.connection.execute(
+                f"""SELECT * FROM process_sessions WHERE pid=? AND process_started_at=?
+                    AND detected_at >= ? ORDER BY detected_at {order}, id {order} LIMIT 1""",
+                (pid, creation, run_start),
+            ).fetchone()
+            if row is None:
+                detected = max(run_start, coverage, creation)
+                if boundary < detected:
+                    return None
+                end = absent_at if started else boundary
+                if end is not None:
+                    end = max(detected, end)
+                session = self._insert(
+                    pid=pid,
+                    process_started_at=creation,
+                    executable_id=executable_id,
+                    detected_at=detected,
+                    ended_at=end,
+                )
+            else:
+                detected = row["detected_at"]
+                end = row["ended_at"]
+                if started:
+                    detected = min(detected, max(run_start, coverage, creation))
+                else:
+                    detected = min(detected, max(run_start, coverage, creation))
+                    if boundary < detected:
+                        return None  # observation belongs to an earlier coverage segment
+                    end = boundary
+                updated = self.connection.execute(
+                    """UPDATE process_sessions SET detected_at=?, ended_at=?,
+                        executable_id=COALESCE(executable_id, ?) WHERE id=? RETURNING *""",
+                    (detected, end, executable_id, row["id"]),
+                ).fetchone()
+                session = self._decode(updated)
+            self._record_boundary(at)
+            return session
+
     def start(
         self,
         *,
@@ -299,10 +355,61 @@ class RunningSessionRepository(_SessionRecords[ApplicationRunningSession]):
     def start(self, application_id: int, *, at: int) -> ApplicationRunningSession:
         return self._start(at, application_id=application_id)
 
+    def rebuild(self, application_id: int, *, since: int, at: int):
+        """Replace only the affected suffix with the union of confirmed process intervals."""
+        with transaction(self.connection):
+            run_start = self._run_start(at)
+            since = max(run_start, since)
+            left = self.connection.execute(
+                """SELECT MIN(started_at) FROM application_running_sessions
+                   WHERE application_id=? AND started_at>=? AND started_at<=?
+                   AND (ended_at IS NULL OR ended_at>=?)""",
+                (application_id, run_start, since, since),
+            ).fetchone()[0]
+            rows = self.connection.execute(
+                """SELECT p.detected_at,p.ended_at FROM process_sessions p
+                   JOIN executables e ON e.id=p.executable_id
+                   WHERE e.application_id=? AND p.detected_at>=?
+                   AND (p.ended_at IS NULL OR p.ended_at>=?) ORDER BY p.detected_at""",
+                (application_id, run_start, since),
+            ).fetchall()
+            # History before the changed process start is unaffected. Preserve that
+            # prefix instead of rebuilding a long-running application's entire day.
+            intervals = [[left, since]] if left is not None and left < since else []
+            for row in rows:
+                start, end = max(since, row[0]), row[1]
+                if intervals and (intervals[-1][1] is None or start <= intervals[-1][1]):
+                    old_end = intervals[-1][1]
+                    intervals[-1][1] = None if old_end is None or end is None else max(old_end, end)
+                else:
+                    intervals.append([start, end])
+            self.connection.execute(
+                "DELETE FROM application_running_sessions WHERE application_id=? AND started_at>=?",
+                (application_id, left if left is not None else since),
+            )
+            opened = None
+            for start, end in intervals:
+                row = self._insert(application_id=application_id, started_at=start, ended_at=end)
+                if end is None:
+                    opened = row
+            self._record_boundary(at)
+            return opened
+
 
 class ForegroundSessionRepository(_SessionRecords[ForegroundSession]):
     table = "foreground_sessions"
     model = ForegroundSession
+
+    def clip_process(self, process_session_id: int, *, ended_at: int, at: int):
+        with transaction(self.connection):
+            run_start = self._run_start(at)
+            self.connection.execute(
+                """UPDATE foreground_sessions SET ended_at=MAX(started_at, ?)
+                   WHERE process_session_id=? AND started_at>=?
+                   AND (ended_at IS NULL OR ended_at>?)""",
+                (ended_at, process_session_id, run_start, ended_at),
+            )
+            self._record_boundary(at)
 
     def start(
         self,
@@ -312,6 +419,7 @@ class ForegroundSessionRepository(_SessionRecords[ForegroundSession]):
         executable_id: int | None = None,
         hwnd: int | None = None,
         window_title: str | None = None,
+        process_session_id: int | None = None,
     ) -> ForegroundSession:
         with transaction(self.connection):
             application = ApplicationRepository(self.connection).get(application_id)
@@ -323,6 +431,7 @@ class ForegroundSessionRepository(_SessionRecords[ForegroundSession]):
                 executable_id=executable_id,
                 hwnd=hwnd,
                 window_title=window_title if application.track_titles else None,
+                process_session_id=process_session_id,
             )
 
 

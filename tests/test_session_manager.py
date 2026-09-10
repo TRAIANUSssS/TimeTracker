@@ -420,14 +420,17 @@ def test_unknown_creation_requires_continuity_token_and_restarts_after_gap(core,
     assert len(rows(database, "process_sessions")) == 2
 
 
-def test_same_foreground_fields_update_process_owner_without_new_interval(core, database):
+def test_same_foreground_fields_split_at_process_owner_change(core, database):
     manager, _ = core
     old, new = process(), process(11)
     manager.handle(ForegroundChanged(1100, ForegroundObservation(old, 42, "Same")))
     manager.handle(ForegroundChanged(1200, ForegroundObservation(new, 42, "Same")))
     manager.handle(ProcessStopped(1300, old.identity))
     assert manager.state.foreground.identity == new.identity
-    assert len(rows(database, "foreground_sessions")) == 1
+    sessions = rows(database, "foreground_sessions")
+    assert len(sessions) == 2
+    assert sessions[0]["ended_at"] == sessions[1]["started_at"] == 1200
+    assert sessions[0]["process_session_id"] != sessions[1]["process_session_id"]
     manager.handle(ProcessStopped(1400, new.identity))
     assert manager.state.foreground is None
 

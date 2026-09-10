@@ -39,6 +39,7 @@ class TrackerState:
     system_session: SystemStateSession
     last_event_at: int
     last_input_at: int
+    last_process_snapshot_at: int = 0
     foreground: ForegroundRuntime | None = None
     running_processes: dict[ProcessIdentity, ProcessRuntime] = field(default_factory=dict)
     application_process_counts: dict[int, int] = field(default_factory=dict)

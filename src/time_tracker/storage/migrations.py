@@ -18,7 +18,20 @@ class Migration:
     statements: tuple[str, ...]
 
 
-MIGRATIONS = (Migration(1, "initial_schema", INITIAL_SCHEMA),)
+MIGRATIONS = (
+    Migration(1, "initial_schema", INITIAL_SCHEMA),
+    Migration(
+        2,
+        "process_event_boundaries",
+        (
+            "ALTER TABLE foreground_sessions ADD COLUMN process_session_id INTEGER "
+            "REFERENCES process_sessions(id)",
+            "CREATE INDEX idx_foreground_process ON foreground_sessions(process_session_id)",
+            "CREATE INDEX idx_process_identity_history "
+            "ON process_sessions(pid, process_started_at, detected_at)",
+        ),
+    ),
+)
 SCHEMA_VERSION = MIGRATIONS[-1].version
 APPLICATION_ID = 0x5454524B  # "TTRK": distinguish tracker files from unrelated SQLite databases.
 

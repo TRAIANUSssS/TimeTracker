@@ -4,6 +4,11 @@ import ntpath
 from pathlib import PureWindowsPath
 
 
+def process_creation_ms(unix_ns: int) -> int:
+    """Match psutil Windows: Unix 100-ns ticks -> double seconds -> rounded ms."""
+    return round(float(unix_ns // 100) / 10_000_000 * 1000)
+
+
 def normalize_executable_path(path: str) -> str:
     """Normalize known absolute Windows paths; never invent a path for unknown processes."""
     if not path or "\x00" in path:

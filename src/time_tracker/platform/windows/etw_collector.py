@@ -84,6 +84,8 @@ def collect(sink, seconds, *, session_factory=EtwSession, consumer_factory=EtwCo
     began = time.monotonic()
     cpu_began = time.process_time()
     started_at = time.time_ns()
+    finish_requested = False
+    receive_control = getattr(sink, "receive_control", None)
 
     def send(kind, **fields):
         nonlocal sequence
@@ -113,13 +115,27 @@ def collect(sink, seconds, *, session_factory=EtwSession, consumer_factory=EtwCo
         session.start()
         consumer.start()
         # Ready means the consumer was opened, not a guarantee of loss-free history.
-        send("ready", started_at_ns=started_at, collector_pid=os.getpid())
+        send(
+            "ready",
+            started_at_ns=started_at,
+            collector_pid=os.getpid(),
+            capabilities=["finish"] if receive_control else [],
+        )
         deadline = began + seconds
         while time.monotonic() < deadline:
             batch = drain()
             if batch["source_done"]:
                 raise RuntimeError(batch["error"] or "ETW source stopped unexpectedly")
-            if not batch["pending"]:
+            if receive_control is not None:
+                try:
+                    command = receive_control(10 if batch["pending"] else 250)
+                except TimeoutError:
+                    continue
+                if command != {"schema_version": 1, "type": "finish", "stream_id": session.name}:
+                    raise ValueError("Invalid collector control command")
+                finish_requested = True
+                break
+            elif not batch["pending"]:
                 consumer.done.wait(min(0.25, max(0, deadline - time.monotonic())))
     finally:
         # A failed transport must still stop the owned session and release the reader.
@@ -137,6 +153,9 @@ def collect(sink, seconds, *, session_factory=EtwSession, consumer_factory=EtwCo
         elapsed_seconds=time.monotonic() - began,
         collector_cpu_seconds=time.process_time() - cpu_began,
         cleanup_confirmed=True,
+        data_complete=not unhealthy(batch),
+        last_sequence=batch["last_sequence"],
+        finish_requested=finish_requested,
     )
 
 

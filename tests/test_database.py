@@ -7,6 +7,7 @@ from time_tracker.storage.database import Database
 from time_tracker.storage.migrations import (
     APPLICATION_ID,
     MIGRATIONS,
+    SCHEMA_VERSION,
     Migration,
     MigrationError,
     migrate,
@@ -18,10 +19,10 @@ from time_tracker.storage.transactions import transaction
 def test_initialization_is_idempotent_and_keeps_data(database: Database) -> None:
     with database.transaction() as connection:
         app = Repositories(connection).applications.create("Редактор", at=100)
-    assert database.initialize() == 1
+    assert database.initialize() == SCHEMA_VERSION
     with database.reader() as connection:
         assert Repositories(connection).applications.get(app.id) == app
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert connection.execute("PRAGMA application_id").fetchone()[0] == APPLICATION_ID
         tables = {
             row[0]
@@ -92,7 +93,7 @@ def test_savepoint_failure_does_not_rollback_previous_work(database: Database) -
 
 def test_failed_migration_rolls_back_ddl_data_and_version(database: Database) -> None:
     failing = Migration(
-        2,
+        SCHEMA_VERSION + 1,
         "broken",
         (
             "CREATE TABLE migration_probe (id INTEGER)",
@@ -103,7 +104,7 @@ def test_failed_migration_rolls_back_ddl_data_and_version(database: Database) ->
     with database.connection() as connection:
         with pytest.raises(sqlite3.OperationalError):
             migrate(connection, (*MIGRATIONS, failing))
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert (
             connection.execute(
                 "SELECT name FROM sqlite_schema WHERE name = 'migration_probe'"
@@ -114,10 +115,12 @@ def test_failed_migration_rolls_back_ddl_data_and_version(database: Database) ->
 
 
 def test_pending_migration_runs_once(database: Database) -> None:
-    second = Migration(2, "add_probe", ("CREATE TABLE migration_probe (id INTEGER)",))
+    second = Migration(
+        SCHEMA_VERSION + 1, "add_probe", ("CREATE TABLE migration_probe (id INTEGER)",)
+    )
     with database.connection() as connection:
-        assert migrate(connection, (*MIGRATIONS, second)) == 2
-        assert migrate(connection, (*MIGRATIONS, second)) == 2
+        assert migrate(connection, (*MIGRATIONS, second)) == SCHEMA_VERSION + 1
+        assert migrate(connection, (*MIGRATIONS, second)) == SCHEMA_VERSION + 1
         with pytest.raises(MigrationError, match="newer"):
             migrate(connection)
     with pytest.raises(MigrationError):
@@ -165,6 +168,22 @@ def test_initial_migration_failure_leaves_empty_schema(tmp_path: Path) -> None:
         assert connection.execute("SELECT name FROM sqlite_schema").fetchall() == []
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 0
         assert connection.execute("PRAGMA application_id").fetchone()[0] == 0
-        assert migrate(connection) == 1
+        assert migrate(connection) == SCHEMA_VERSION
     finally:
         connection.close()
+
+
+def test_upgrade_v1_preserves_existing_foreground_history(tmp_path):
+    path = tmp_path / "old.db"
+    with sqlite3.connect(path, isolation_level=None) as con:
+        migrate(con, MIGRATIONS[:1])
+        con.execute("INSERT INTO applications(name,created_at,updated_at) VALUES ('Editor',0,0)")
+        con.execute(
+            "INSERT INTO foreground_sessions(application_id,started_at,ended_at) VALUES (1,100,200)"
+        )
+    database = Database(path)
+    database.initialize()
+    with database.reader() as con:
+        row = con.execute("SELECT * FROM foreground_sessions").fetchone()
+        assert (row["started_at"], row["ended_at"], row["process_session_id"]) == (100, 200, None)
+        assert con.execute("PRAGMA foreign_key_check").fetchall() == []

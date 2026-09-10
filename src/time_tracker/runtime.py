@@ -42,14 +42,15 @@ class TrackerRuntime:
         return self._manager.state if self._manager is not None else None
 
     @measured("runtime.start")
-    def start(self, *, snapshot_filter=None) -> None:
+    def start(self, *, snapshot_filter=None, snapshot=None) -> None:
         if self._manager is not None:
             raise RuntimeError("Runtime is already started")
         self._lock.acquire()
         try:
             self.database.initialize()
             manager = SessionManager(SQLiteTrackerStore(self.database), version=__version__)
-            snapshot = self.provider.snapshot()
+            if snapshot is None:
+                snapshot = self.provider.snapshot()
             if snapshot_filter is not None:
                 snapshot = snapshot_filter(snapshot)
             manager.handle(TrackerStarted(snapshot.observed_at, snapshot))
@@ -73,13 +74,17 @@ class TrackerRuntime:
         self.handle(Heartbeat(max(self.clock.now_ms(), state.last_event_at)))
 
     @measured("runtime.stop")
-    def stop(self) -> None:
+    def stop(self, *, at: int | None = None, reason: str = "normal") -> None:
         if self._manager is None:
             return
         state = self.state
         assert state is not None
         try:
-            self._manager.handle(TrackerStopping(max(self.clock.now_ms(), state.last_event_at)))
+            self._manager.handle(
+                TrackerStopping(
+                    max(self.clock.now_ms(), state.last_event_at) if at is None else at, reason
+                )
+            )
         finally:
             # On persistence failure, leave an unfinished run for next startup recovery.
             self._manager = None
