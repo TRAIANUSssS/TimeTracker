@@ -112,6 +112,23 @@ Dashboard и сборка:
 финальный/отменённый WM_ENDSESSION и закрытие API.
 
 Два opt-in smoke пропускаются по умолчанию.
+
+`test_process_events_probe.py`: диагностический прототип WMI, FILETIME событий,
+различение HRESULT/timeout, COM owner/cleanup и отказ в доступе. Production process
+events ещё не подключены; доступность на ПК проверяется отдельным
+`tools/probe_process_events.py` (см. отчёт этапа 5).
+
+`test_etw_probe.py`: x64 ABI ETW, TDH-декодирование start/stop по зарегистрированной
+схеме Windows без активной подписки, ошибки callback, ограничение очереди,
+учёт потерь, отсутствие сессии и чтение actual process times собственного помощника.
+Живая ETW-доставка проверяется обновлённым `probe_process_events.py` отдельно.
+
+`test_etw_collector.py`: 24 проверки отдельного сборщика и IPC без повышенных прав:
+реальные named pipes, ACL, запрет команд от читателя, отмена I/O, медленный/отключённый
+читатель, частичный фрейм, конфликт каналов, cleanup, сохранение пути и identity,
+потери и последовательности. Live-проверка повышенного сборщика с обычным читателем:
+[инструкция](../docs/etw-collector.md), `tools/check_etw_collector.py`.
+
 Packaged smoke отдельно прошёл на текущем Windows 11 x64. Браузерные скриншоты
 с искусственными данными и скриншот настоящего exe сохраняются в
 `frontend/test-results/`, вне Git. Реальный вход в Windows после перезагрузки
