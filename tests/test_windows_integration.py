@@ -9,6 +9,97 @@ import pytest
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows message loop")
 
 
+@pytest.mark.parametrize("phase", ["startup", "poll"])
+@pytest.mark.parametrize("shutdown", ["close", "endsession"])
+def test_native_window_responds_while_worker_is_blocked(tmp_path, phase, shutdown):
+    script = r"""
+import sys
+import threading
+from types import SimpleNamespace
+import win32con
+import win32gui
+from time_tracker.collector import CollectionController
+from time_tracker.domain.events import TrackerSnapshot
+from time_tracker.platform.windows.native import WindowsAPI
+from time_tracker.runtime import TrackerRuntime
+from time_tracker.storage.database import Database
+from time_tracker.tray.tray_app import TrayApplication
+database = Database(sys.argv[1])
+phase, shutdown = sys.argv[2:]
+blocked, release = threading.Event(), threading.Event()
+clock = SimpleNamespace(at=1000)
+clock.now_ms = lambda: clock.at
+def pause():
+    blocked.set()
+    assert release.wait(8)
+class Provider:
+    def __init__(self):
+        self.processes = SimpleNamespace(snapshot=self.poll)
+    def snapshot(self):
+        if phase == 'startup': pause()
+        return TrackerSnapshot(clock.at, (), None, clock.at)
+    def poll(self):
+        pause()
+        return ()
+provider = Provider()
+runtime = TrackerRuntime(database, provider, clock=clock)
+controller = CollectionController(runtime, provider, clock, monotonic=lambda: clock.at / 1000)
+app = TrayApplication(controller, WindowsAPI(), show_icon=False)
+errors = []
+def drive():
+    try:
+        if phase == 'poll':
+            # Wait for the native window to create/start its worker.
+            for _ in range(800):
+                if app.worker is not None and app.worker.ready.is_set(): break
+                threading.Event().wait(.01)
+            else: raise AssertionError('startup timeout')
+            clock.at = 6000
+        assert blocked.wait(8)
+        win32gui.SendMessageTimeout(app.hwnd, win32con.WM_NULL, 0, 0, 2, 500)
+        assert not release.is_set()
+        assert win32gui.SendMessage(app.hwnd, win32con.WM_QUERYENDSESSION, 0, 0) == 1
+        # A cancelled OS shutdown must leave tracking alive.
+        win32gui.SendMessage(app.hwnd, win32con.WM_ENDSESSION, 0, 0)
+        assert not app.worker.done.is_set()
+        if shutdown == 'close':
+            win32gui.SendMessageTimeout(app.hwnd, win32con.WM_CLOSE, 0, 0, 2, 500)
+            assert not app.worker.done.is_set(), 'Exit blocked for collection'
+            release.set()
+        else:
+            timer = threading.Timer(.2, release.set)
+            timer.start()
+            win32gui.SendMessageTimeout(app.hwnd, win32con.WM_ENDSESSION, 1, 0, 2, 3000)
+            assert app.worker.done.is_set(), 'OS shutdown acknowledged before persistence'
+            timer.join()
+    except BaseException as error:
+        errors.append(error)
+        release.set()
+        if app.hwnd: win32gui.PostMessage(app.hwnd, win32con.WM_CLOSE, 0, 0)
+driver = threading.Thread(target=drive, daemon=True)
+driver.start()
+app.run()
+driver.join(5)
+assert not driver.is_alive()
+assert not errors, errors
+with database.reader() as connection:
+    runs = [tuple(row) for row in connection.execute('SELECT exit_reason FROM tracker_runs')]
+    assert runs == ([] if phase == 'startup' else [('normal',)]), runs
+print('responsive')
+"""
+    child = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path / "responsive.db"), phase, shutdown],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=20,
+        env={**os.environ, "PYTHONUTF8": "1"},
+        creationflags=subprocess.CREATE_NO_WINDOW,
+        check=False,
+    )
+    assert child.returncode == 0, child.stdout + child.stderr
+
+
 def test_native_window_system_messages_and_exit(tmp_path):
     script = r"""
 import sys
@@ -144,20 +235,19 @@ def test_window_callback_failure_aborts_instead_of_silently_continuing(monkeypat
     aborted = []
     quit_codes = []
 
-    def failed():
+    def failed(_):
         raise OSError("disk unavailable")
 
-    controller = SimpleNamespace(
-        tick=failed, runtime=SimpleNamespace(abort=lambda: aborted.append(True))
+    app = TrayApplication(None, None, show_icon=False)
+    app.worker = SimpleNamespace(
+        notify=failed, request_stop=lambda **kw: aborted.append(kw["abort"])
     )
-    app = TrayApplication(controller, None, show_icon=False)
     app._started = True
     monkeypatch.setattr(win32gui, "PostQuitMessage", quit_codes.append)
-    app._window_proc(0, win32con.WM_TIMER, 1, 0)
+    app._window_proc(0, win32con.WM_POWERBROADCAST, 4, 0)
     assert isinstance(app.error, OSError)
     assert aborted == [True]
     assert quit_codes == [1]
-    assert not app._started
 
 
 def test_exit_during_collection_waits_for_current_transaction(monkeypatch):
@@ -171,13 +261,16 @@ def test_exit_during_collection_waits_for_current_transaction(monkeypatch):
     controller = SimpleNamespace(stop=lambda: stopped.append(True))
     app = TrayApplication(controller, None, show_icon=False)
     app._started = True
-    app._busy = True
-    monkeypatch.setattr(win32gui, "PostQuitMessage", lambda _: None)
+    requests = []
+    quits = []
+    app.worker = SimpleNamespace(request_stop=lambda: requests.append(True), error=None)
+    monkeypatch.setattr(win32gui, "PostQuitMessage", quits.append)
     app._close()
     assert not stopped
-    app._busy = False
-    app._drain()
-    assert stopped == [True]
+    assert requests == [True]
+    assert quits == []
+    app._worker_finished()
+    assert quits == [0]
     assert not app._started
 
 

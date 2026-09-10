@@ -81,6 +81,16 @@ def render(root):
             ]
         )
     for run in runs:
+        probe = run.get("window_probe")
+        if probe:
+            lines.extend(
+                [
+                    "",
+                    f"Window probe `{run.get('directory')}`: {probe['count']} samples, "
+                    f"{probe['failures']} failures; successful RTT "
+                    f"p95={probe['p95_ms']} ms, max={probe['max_ms']} ms.",
+                ]
+            )
         history = run.get("history")
         if history:
             lines.extend(
@@ -134,6 +144,22 @@ def render(root):
                 f"{item['exclusive_cpu_ms']:.1f} | {item['wall_ms'] / item['count']:.2f} | "
                 f"{item['max_wall_ms']:.2f} |"
             )
+        lines.extend(
+            [
+                "",
+                "Latency quantiles per interval (not averaged or counted as execution time):",
+                "",
+                "| Interval UTC ms | Metric | Count | p95 ms | Max ms |",
+                "|---|---|---:|---:|---:|",
+            ]
+        )
+        for line in path.read_text(encoding="utf-8").splitlines():
+            record = json.loads(line)
+            for name, item in record.get("latencies", {}).items():
+                lines.append(
+                    f"| {record['at_unix_ms']} | {name} | {item['count']} | "
+                    f"{item['wall_ms']['p95']:.2f} | {item['wall_ms']['max']:.2f} |"
+                )
     return "\n".join(lines) + "\n"
 
 

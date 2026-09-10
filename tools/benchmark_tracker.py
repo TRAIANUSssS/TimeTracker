@@ -181,7 +181,33 @@ def verify_history(path):
     return result
 
 
-def measure(pid, creation, duration, directory, *, database=None, churn=False):
+def window_probe(pid):
+    """WM_NULL round trip to our isolated child; no input or activation of the desktop."""
+    import win32con
+    import win32gui
+    import win32process
+
+    windows = []
+
+    def visit(hwnd, _):
+        if win32process.GetWindowThreadProcessId(hwnd)[1] == pid and win32gui.GetClassName(
+            hwnd
+        ).startswith("TimeTracker."):
+            windows.append(hwnd)
+
+    win32gui.EnumWindows(visit, None)
+    if len(windows) != 1:
+        raise RuntimeError("Benchmark window disappeared")
+    began = time.perf_counter()
+    try:
+        win32gui.SendMessageTimeout(windows[0], win32con.WM_NULL, 0, 0, 0x2, 3000)
+        success = True
+    except win32gui.error:
+        success = False
+    return {"wall_ms": (time.perf_counter() - began) * 1000, "success": success}
+
+
+def measure(pid, creation, duration, directory, *, database=None, churn=False, probe_window=False):
     connection = open_history(database) if database is not None else None
     samples, helpers, launches = [], [], []
     started = time.perf_counter()
@@ -197,6 +223,8 @@ def measure(pid, creation, duration, directory, *, database=None, churn=False):
                     at_unix_ms=time.time_ns() // 1_000_000,
                     state=current_state(connection),
                 )
+                if probe_window:
+                    sample["window_probe"] = window_probe(pid)
                 samples.append(sample)
                 stream.write(json.dumps(sample) + "\n")
                 stream.flush()
@@ -243,6 +271,16 @@ def measure(pid, creation, duration, directory, *, database=None, churn=False):
         "helpers": launches,
         "scenario": "churn" if churn else "quiet",
     }
+    if probe_window:
+        probes = [item["window_probe"] for item in samples]
+        values = sorted(item["wall_ms"] for item in probes if item["success"])
+        result["window_probe"] = {
+            "count": len(probes),
+            "failures": sum(not item["success"] for item in probes),
+            "mean_ms": sum(values) / len(values) if values else None,
+            "p95_ms": values[math.ceil(len(values) * 0.95) - 1] if values else None,
+            "max_ms": max(values) if values else None,
+        }
     if samples[0]["io"] and samples[-1]["io"]:
         result["io_delta"] = {
             key: samples[-1]["io"][key] - value for key, value in samples[0]["io"].items()
@@ -301,6 +339,7 @@ def launched_run(args, directory, mode):
                     directory,
                     database=database,
                     churn=args.scenario == "churn",
+                    probe_window=args.probe_window,
                 )
             )
         finally:
@@ -371,6 +410,9 @@ def main(argv=None):
     )
     parser.add_argument("--snapshots", type=int, default=5)
     parser.add_argument("--scenario", choices=("quiet", "churn"), default="quiet")
+    parser.add_argument(
+        "--probe-window", action="store_true", help="measure isolated HWND response"
+    )
     parser.add_argument("--output", type=Path, default=ROOT / "build" / "benchmarks")
     args = parser.parse_args(argv)
     if sys.platform != "win32":
@@ -386,6 +428,8 @@ def main(argv=None):
         parser.error("duration >=1, warmup 0..60, repeats/snapshots >=1 are required")
     if args.pid is not None and args.scenario != "quiet":
         parser.error("--pid is read-only observation; churn requires an isolated launch")
+    if args.probe_window and (args.pid is not None or args.micro):
+        parser.error("--probe-window requires an isolated launch")
     if args.executable is not None:
         args.executable = args.executable.resolve(strict=True)
     root = args.output.resolve() / (
@@ -401,6 +445,7 @@ def main(argv=None):
             "repeats": args.repeats,
             "modes": args.modes,
             "scenario": args.scenario,
+            "probe_window": args.probe_window,
             "target": "observe"
             if args.pid
             else "micro"

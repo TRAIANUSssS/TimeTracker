@@ -102,8 +102,16 @@ Dashboard и сборка:
   API/PATCH, heartbeat и SQLite, загрузка dashboard в Edge через реальный API,
   отсутствие внешних запросов и штатное завершение. Вызывать после сборки
   с `TIME_TRACKER_PACKAGED_SMOKE=1`; см. [инструкцию](../docs/ui-build.md).
+  Для диагностической сборки в другом каталоге указать полный путь к exe в
+  `TIME_TRACKER_PACKAGED_EXE`; по умолчанию проверяется `dist/TimeTracker/TimeTracker.exe`.
 
-Полный Python-набор: 213 тестов, два opt-in smoke пропускаются по умолчанию.
+`test_worker.py` проверяет настоящим потоком: владение runtime, очереди lock/sleep/wake
+во время долгого poll/resume, отмену стартового snapshot, выход до старта,
+переполнение с recovery и команды настроек после lifecycle. Нативные integration
+тесты дополнительно блокируют источник и проверяют ответ HWND, асинхронный Exit,
+финальный/отменённый WM_ENDSESSION и закрытие API.
+
+Два opt-in smoke пропускаются по умолчанию.
 Packaged smoke отдельно прошёл на текущем Windows 11 x64. Браузерные скриншоты
 с искусственными данными и скриншот настоящего exe сохраняются в
 `frontend/test-results/`, вне Git. Реальный вход в Windows после перезагрузки

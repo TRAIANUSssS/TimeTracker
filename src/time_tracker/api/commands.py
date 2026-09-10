@@ -41,8 +41,13 @@ class SettingsMailbox:
             # Once accepted, report the committed result; never report failure then write later.
             return future.result()
 
-    def drain(self):
+    def drain(self, *, event_time=None):
         for _ in range(64):
+            # Reserve a timestamp before accepting a command. Native lifecycle
+            # notifications take precedence; HTTP arrival time is not history time.
+            reserved_at = event_time() if event_time is not None else None
+            if event_time is not None and reserved_at is None:
+                break
             try:
                 app_id, changes, future = self._queue.get_nowait()
             except Empty:
@@ -53,7 +58,10 @@ class SettingsMailbox:
                 state = self.runtime.state
                 if state is None:
                     raise WriterUnavailable("Tracker is not running")
-                at = max(self.runtime.clock.now_ms(), state.last_event_at)
+                at = max(
+                    self.runtime.clock.now_ms() if reserved_at is None else reserved_at,
+                    state.last_event_at,
+                )
                 if not self.runtime.handle(ApplicationSettingsChanged(at, app_id, **changes)):
                     raise WriterUnavailable("Tracker rejected the command")
                 future.set_result(application_json(asdict(self.runtime.state.applications[app_id])))

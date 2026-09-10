@@ -12,6 +12,21 @@ def records(path):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def test_latencies_are_bounded_and_separate_from_execution_time(tmp_path):
+    path = tmp_path / "latency.jsonl"
+    recorder = performance.Recorder(path, capacity=2, metadata={})
+    for seconds in (1, 2, 3):
+        recorder.latency("queue.wait", seconds)
+    recorder.close()
+    data = records(path)[1]
+    assert data["stages"] == {}
+    item = data["latencies"]["queue.wait"]
+    assert item["count"] == 3
+    assert item["sample_count"] == 2
+    assert item["wall_ms"]["total"] == 6000
+    assert item["wall_ms"]["p95"] == 3000
+
+
 def test_nested_exclusive_time_and_bounded_quantiles(tmp_path):
     now = [0]
     path = tmp_path / "perf.jsonl"

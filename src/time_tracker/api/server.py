@@ -1,4 +1,4 @@
-"""One loopback HTTP server alongside the Windows owner thread; no extra writer."""
+"""Loopback HTTP server; the collection owner drains settings, with no extra writer."""
 
 import logging
 import socket

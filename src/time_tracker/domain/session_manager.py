@@ -20,6 +20,7 @@ from time_tracker.domain.events import (
     ProcessObservation,
     ProcessStarted,
     ProcessStopped,
+    ResumeNotified,
     SessionLocked,
     SessionUnlocked,
     SleepPeriodRecorded,
@@ -181,6 +182,11 @@ class SessionManager:
                 open_foreground = repo.foreground.list_open()
                 if not open_foreground or open_foreground[0].id != state.foreground.session.id:
                     state.foreground = None
+        elif isinstance(event, ResumeNotified):
+            flags = replace(state.flags, is_sleeping=False)
+            if event.unlocked:
+                flags = replace(flags, is_locked=False)
+            self._change_system(state, repo, flags, at)
         elif isinstance(event, SystemResumed):
             self._check_snapshot_time(at, event.snapshot)
             if event.snapshot.is_sleeping:

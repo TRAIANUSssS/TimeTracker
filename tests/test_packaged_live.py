@@ -23,7 +23,10 @@ def test_packaged_tracker_dashboard_collection_and_shutdown(tmp_path):
     import win32gui
     import win32process
 
-    executable = Path(__file__).resolve().parents[1] / "dist/TimeTracker/TimeTracker.exe"
+    root = Path(__file__).resolve().parents[1]
+    executable = Path(
+        os.environ.get("TIME_TRACKER_PACKAGED_EXE", root / "dist/TimeTracker/TimeTracker.exe")
+    ).resolve()
     assert executable.is_file()
     database = Database(tmp_path / "История с пробелами" / "tracker.db")
     with socket.socket() as listener:
@@ -81,7 +84,7 @@ def test_packaged_tracker_dashboard_collection_and_shutdown(tmp_path):
             }
             cells = client.get("/stats/activity", params=params).json()
             assert any(cell["status"] == "missing_hour" for cell in cells)
-            frontend = executable.parents[2] / "frontend"
+            frontend = root / "frontend"
             browser = subprocess.run(
                 ["node", "tests/packaged-browser.mjs", f"http://127.0.0.1:{port}"],
                 cwd=frontend,

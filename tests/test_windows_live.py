@@ -39,13 +39,20 @@ class Controller(CollectionController):
     def start(self):
         super().start()
         ready.set()
+    def tick(self):
+        super().tick()
+        state = self.runtime.state
+        if state.run.last_heartbeat_at > state.run.started_at:
+            heartbeat.set()
 controller = Controller(runtime, provider, clock,
     power_history=PowerHistory() if api.modern_standby_supported() else None)
 app = TrayApplication(controller, api)
+heartbeat = threading.Event()
 def finish():
     if ready.wait(25):
-        # A separate Event timeout keeps the test finite and allows a full 5-second poll cycle.
-        threading.Event().wait(6)
+        # Exit now cancels an in-flight poll: wait for an actual committed heartbeat,
+        # rather than assuming that a five-second schedule finishes within six seconds.
+        heartbeat.wait(12)
         win32gui.PostMessage(app.hwnd, win32con.WM_CLOSE, 0, 0)
 threading.Thread(target=finish, daemon=True).start()
 app.run()

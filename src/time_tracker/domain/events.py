@@ -60,6 +60,7 @@ class EventType(StrEnum):
     SYSTEM_SLEEP = "SYSTEM_SLEEP"
     SYSTEM_WAKE = "SYSTEM_WAKE"
     SYSTEM_RESUMED = "SYSTEM_RESUMED"
+    RESUME_NOTIFIED = "RESUME_NOTIFIED"
     SLEEP_PERIOD_RECORDED = "SLEEP_PERIOD_RECORDED"
     HEARTBEAT = "HEARTBEAT"
     APPLICATION_SETTINGS_CHANGED = "APPLICATION_SETTINGS_CHANGED"
@@ -151,6 +152,14 @@ class SystemResumed(TrackerEvent):
 
     snapshot: TrackerSnapshot
     kind: ClassVar[EventType] = EventType.SYSTEM_RESUMED
+
+
+@dataclass(frozen=True, slots=True)
+class ResumeNotified(TrackerEvent):
+    """Native resume boundary; retain unknown user state until a fresh observation."""
+
+    unlocked: bool = False
+    kind: ClassVar[EventType] = EventType.RESUME_NOTIFIED
 
 
 @dataclass(frozen=True, slots=True)

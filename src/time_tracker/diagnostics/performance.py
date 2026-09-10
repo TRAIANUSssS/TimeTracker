@@ -122,6 +122,7 @@ class Recorder:
         self.local = threading.local()
         self.lock = threading.RLock()
         self.stages = {}
+        self.latencies = {}
         self.counters = Counter()
         self.closed = False
         path = Path(path)
@@ -191,6 +192,11 @@ class Recorder:
         with self.lock:
             self.counters[name] += value
 
+    def latency(self, name, seconds):
+        with self.lock:
+            aggregate = self.latencies.setdefault(name, Aggregate(self.capacity))
+            aggregate.add((max(0, int(seconds * 1_000_000_000)), 0, 0, 0), False)
+
     def flush(self, *, force=False):
         with self.lock:
             if self.closed:
@@ -207,9 +213,19 @@ class Recorder:
                     "process_cpu_ms": (cpu - self.last_process) / 1_000_000,
                     "stages": {key: value.export() for key, value in self.stages.items()},
                     "counters": dict(self.counters),
+                    "latencies": {
+                        key: {
+                            "count": value.count,
+                            "sample_count": len(value.samples),
+                            "quantiles": "most_recent_samples",
+                            "wall_ms": value.export()["wall_ms"],
+                        }
+                        for key, value in self.latencies.items()
+                    },
                 }
             )
             self.stages.clear()
+            self.latencies.clear()
             self.counters.clear()
             self.last_wall = now
             self.last_process = cpu
@@ -284,3 +300,10 @@ def count(name, value=1, *, detailed=False):
     recorder = _active
     if recorder is not None and not recorder.closed and (not detailed or recorder.detailed):
         recorder.count(name, value)
+
+
+def latency(name, seconds):
+    """Delivery/scheduling delay, separate from execution and exclusive CPU totals."""
+    recorder = _active
+    if recorder is not None and not recorder.closed:
+        recorder.latency(name, seconds)

@@ -42,7 +42,7 @@ class TrackerRuntime:
         return self._manager.state if self._manager is not None else None
 
     @measured("runtime.start")
-    def start(self) -> None:
+    def start(self, *, snapshot_filter=None) -> None:
         if self._manager is not None:
             raise RuntimeError("Runtime is already started")
         self._lock.acquire()
@@ -50,6 +50,8 @@ class TrackerRuntime:
             self.database.initialize()
             manager = SessionManager(SQLiteTrackerStore(self.database), version=__version__)
             snapshot = self.provider.snapshot()
+            if snapshot_filter is not None:
+                snapshot = snapshot_filter(snapshot)
             manager.handle(TrackerStarted(snapshot.observed_at, snapshot))
         except BaseException:
             self._lock.release()

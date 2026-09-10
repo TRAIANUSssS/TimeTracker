@@ -1,9 +1,9 @@
-"""Native Windows tray and hidden top-level window on the tracker owner thread."""
+"""Responsive native window; collection and writes belong to CollectionWorker."""
 
 import logging
 import signal
+import time
 import webbrowser
-from collections import deque
 from uuid import uuid4
 
 import win32api
@@ -11,10 +11,13 @@ import win32con
 import win32gui
 import win32ts
 
+from time_tracker.diagnostics.performance import latency
 from time_tracker.paths import tray_icon_path
+from time_tracker.worker import CollectionWorker
 
 logger = logging.getLogger(__name__)
 WM_TRAY = win32con.WM_APP + 1
+WM_WORKER_DONE = win32con.WM_APP + 2
 EXIT_COMMAND = 1003
 DASHBOARD_COMMAND = 1001
 AUTOSTART_COMMAND = 1004
@@ -44,9 +47,8 @@ class TrayApplication:
         self._power_registration = None
         self._started = False
         self._closing = False
-        self._stop_requested = False
-        self._busy = False
-        self._pending = deque()
+        self.worker = None
+        self._last_timer = None
         self.error = None
 
     def run(self):
@@ -73,31 +75,29 @@ class TrayApplication:
                 instance,
                 None,
             )
+            self.worker = CollectionWorker(
+                self.controller,
+                service=self.service,
+                completed=lambda: win32gui.PostMessage(self.hwnd, WM_WORKER_DONE, 0, 0),
+            )
             win32ts.WTSRegisterSessionNotification(self.hwnd, win32ts.NOTIFY_FOR_THIS_SESSION)
             self._registered = True
             self._power_registration = self.api.register_power_notifications(self.hwnd)
             logger.info("Registered Windows suspend/resume notifications")
-            self._busy = True
-            try:
-                self.controller.start()
-                self._started = True
-                if self.service is not None:
-                    self.service.start()
-            finally:
-                self._busy = False
-            self._drain()
+            self.worker.start()
+            self._started = True
             if self.show_icon:
                 self._add_icon()
             if not self.api.user32.SetTimer(self.hwnd, 1, 250, None):
                 raise OSError("Cannot start the collection timer")
+            self._last_timer = time.monotonic()
             signal.signal(
                 signal.SIGINT, lambda *_: win32gui.PostMessage(self.hwnd, win32con.WM_CLOSE, 0, 0)
             )
             win32gui.PumpMessages()
         except BaseException:
-            if self._started:
-                self.controller.runtime.abort()
-                self._started = False
+            if self.worker is not None:
+                self.worker.request_stop(abort=True)
             raise
         finally:
             signal.signal(signal.SIGINT, previous_signal)
@@ -105,7 +105,7 @@ class TrayApplication:
             win32gui.UnregisterClass(self._class_name, instance)
         if self.error is not None:
             raise RuntimeError(
-                "Windows collection stopped; see the log for details"
+                f"Windows collection stopped: {self.error}; see the log for details"
             ) from self.error
 
     def _add_icon(self):
@@ -185,33 +185,22 @@ class TrayApplication:
             )
 
     def _notify(self, kind):
-        logger.info("Windows notification: %s", kind)
-        self._pending.append((kind, self.controller.clock.now_ms()))
-        if not self._busy and self._started:
-            self._drain()
-
-    def _drain(self):
-        self._busy = True
-        try:
-            while self._pending and self._started:
-                kind, at = self._pending.popleft()
-                self.controller.notify(kind, at)
-        finally:
-            self._busy = False
-        if self._stop_requested:
-            self._close()
+        if self.worker is not None:
+            self.worker.notify(kind)
 
     def _window_proc(self, hwnd, message, wparam, lparam):
+        entered = time.monotonic()
         try:
-            if message == win32con.WM_TIMER and self._started and not self._busy:
-                self._busy = True
-                try:
-                    if self.service is not None:
-                        self.service.tick()
-                    self.controller.tick()
-                finally:
-                    self._busy = False
-                self._drain()
+            if message == WM_WORKER_DONE:
+                self._worker_finished()
+                return 0
+            if message == win32con.WM_TIMER and self._started:
+                now = time.monotonic()
+                if self._last_timer is not None:
+                    latency("window.timer_lateness", now - self._last_timer - 0.25)
+                self._last_timer = now
+                if self.worker.done.is_set():
+                    self._worker_finished()
                 return 0
             if message == 0x02B1:  # WM_WTSSESSION_CHANGE
                 if wparam in (7, 2, 4):  # lock, console disconnect, remote disconnect
@@ -231,18 +220,26 @@ class TrayApplication:
                 return 1
             if message == win32con.WM_ENDSESSION and wparam:
                 self._close()
+                # Windows may terminate us after this callback returns. Unlike a tray
+                # Exit, final OS shutdown must finish persistence before acknowledging.
+                if self.worker is not None:
+                    self.worker.join()
+                    self._worker_finished()
                 return 0
             if message == win32con.WM_CLOSE:
                 self._close()
                 return 0
             if message == win32con.WM_DESTROY:
                 if not self._closing:
-                    self._close()
+                    self.error = RuntimeError("Native collection window was destroyed unexpectedly")
+                    if self.worker is not None:
+                        self.worker.request_stop(abort=True)
+                    win32gui.PostQuitMessage(1)
                 return 0
-            if message == WM_TRAY and lparam == win32con.WM_LBUTTONUP and not self._busy:
+            if message == WM_TRAY and lparam == win32con.WM_LBUTTONUP:
                 self._open_dashboard()
                 return 0
-            if message == WM_TRAY and not self._busy and lparam == win32con.WM_RBUTTONUP:
+            if message == WM_TRAY and lparam == win32con.WM_RBUTTONUP:
                 self._menu()
                 return 0
             if message == self._taskbar_created and self._started and self.show_icon:
@@ -252,34 +249,37 @@ class TrayApplication:
             # Exceptions escaping a pywin32 callback otherwise only get printed and swallowed.
             logger.exception("Windows event processing failed")
             self.error = error
-            if self._started:
-                self.controller.runtime.abort()
-                self._started = False
+            if self.worker is not None:
+                self.worker.request_stop(abort=True)
             win32gui.PostQuitMessage(1)
             return 0
+        finally:
+            # Aggregation only: JSONL flushing belongs to the collection thread.
+            latency("window.callback_duration", time.monotonic() - entered)
         return win32gui.DefWindowProc(hwnd, message, wparam, lparam)
 
     def _close(self):
-        if self._busy:
-            self._stop_requested = True
-            return
         if self._closing:
             return
         self._closing = True
-        if self.service is not None:
-            self.service.stop()
-        if self._started:
-            self.controller.stop()
-            self._started = False
-        win32gui.PostQuitMessage(0)
+        if self.worker is not None:
+            self.worker.request_stop()
+        else:
+            win32gui.PostQuitMessage(0)
+
+    def _worker_finished(self):
+        self.error = self.error or self.worker.error
+        self._started = False
+        self._closing = True
+        win32gui.PostQuitMessage(1 if self.error else 0)
 
     def _cleanup(self):
         self._closing = True
-        if self.service is not None:
-            self.service.stop()
-        if self._started:
-            self.controller.stop()
-            self._started = False
+        if self.worker is not None:
+            self.worker.request_stop(abort=self.error is not None)
+            self.worker.join()
+            self.error = self.error or self.worker.error
+        self._started = False
         if self.hwnd and win32gui.IsWindow(self.hwnd):
             self.api.user32.KillTimer(self.hwnd, 1)
             if self._power_registration is not None:
