@@ -33,6 +33,11 @@ class ProcessEventSource:
         self._active = False
         self._finish_done = False
         self._complete = False
+        self._collector_pid = None
+        self._generations = 0
+        self._faults = 0
+        self._peak_pending = 0
+        self._received = 0
         self.finish_requested = False
         self.connected = threading.Event()
         self.finished = threading.Event()
@@ -47,9 +52,26 @@ class ProcessEventSource:
 
     def invalidate(self):
         with self._lock:
+            if not self._invalid:
+                self._faults += 1
             self._healthy = False
             self._invalid = True
             self._queue.clear()
+
+    def status(self):
+        """Read-only bounded telemetry; contains no executable paths or window titles."""
+        with self._lock:
+            return {
+                "generation": self._generation,
+                "collector_pid": self._collector_pid,
+                "generations": self._generations,
+                "healthy": self._healthy and time.monotonic() - self._last_packet < 5,
+                "invalid": self._invalid,
+                "faults": self._faults,
+                "pending": len(self._queue),
+                "peak_pending": self._peak_pending,
+                "received": self._received,
+            }
 
     def poll(self, limit=64):
         with self._lock:
@@ -103,6 +125,8 @@ class ProcessEventSource:
                         last_packet = time.monotonic()
                         with self._lock:
                             if message["type"] == "ready":
+                                self._collector_pid = message.get("collector_pid")
+                                self._generations += 1
                                 self._generation = stream.stream_id
                                 self._coverage = message["started_at_ns"] // 1_000_000
                                 self._queue.clear()
@@ -113,10 +137,14 @@ class ProcessEventSource:
                                 can_finish = "finish" in message.get("capabilities", [])
                             self._last_packet = last_packet
                             if stream.gap or len(self._queue) + len(records) > self.capacity:
+                                if not self._invalid:
+                                    self._faults += 1
                                 self._invalid = True
                                 self._queue.clear()
                             if not self._invalid:
                                 self._queue.extend(records)
+                            self._received += len(records)
+                            self._peak_pending = max(self._peak_pending, len(self._queue))
                             self._healthy = stream.healthy and not self._invalid
                             if self._healthy:
                                 self.connected.set()

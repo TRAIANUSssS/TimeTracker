@@ -299,6 +299,8 @@ def launched_run(args, directory, mode):
         else [sys.executable, "-m", "time_tracker", "--track"]
     )
     command += ["--database", str(database), "--api-port", str(port)]
+    if getattr(args, "process_events", None):
+        command += ["--process-events", args.process_events]
     if mode != "off":
         command += ["--perf", str(directory / "performance.jsonl")]
         if mode == "detail":
@@ -411,6 +413,9 @@ def main(argv=None):
     parser.add_argument("--snapshots", type=int, default=5)
     parser.add_argument("--scenario", choices=("quiet", "churn"), default="quiet")
     parser.add_argument(
+        "--process-events", help="Connect isolated tracker to an existing ETW channel"
+    )
+    parser.add_argument(
         "--probe-window", action="store_true", help="measure isolated HWND response"
     )
     parser.add_argument("--output", type=Path, default=ROOT / "build" / "benchmarks")
@@ -430,6 +435,12 @@ def main(argv=None):
         parser.error("--pid is read-only observation; churn requires an isolated launch")
     if args.probe_window and (args.pid is not None or args.micro):
         parser.error("--probe-window requires an isolated launch")
+    if args.process_events:
+        if args.pid is not None or args.micro:
+            parser.error("--process-events requires an isolated launch")
+        from time_tracker.platform.windows.event_pipe import pipe_name
+
+        pipe_name(args.process_events)
     if args.executable is not None:
         args.executable = args.executable.resolve(strict=True)
     root = args.output.resolve() / (
@@ -446,6 +457,7 @@ def main(argv=None):
             "modes": args.modes,
             "scenario": args.scenario,
             "probe_window": args.probe_window,
+            "process_events": args.process_events,
             "target": "observe"
             if args.pid
             else "micro"
