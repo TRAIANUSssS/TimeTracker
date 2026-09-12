@@ -224,6 +224,41 @@ def test_partial_frame_timeout_closes_reader():
         assert client.handle is None
 
 
+@pytest.mark.parametrize("control", [False, True])
+def test_frame_read_survives_sleep_between_header_and_payload(monkeypatch, control):
+    from types import SimpleNamespace
+
+    from time_tracker.platform.windows import event_pipe
+
+    elapsed = [0.0]
+    awake = [0.0]
+    monkeypatch.setattr(
+        event_pipe, "time", SimpleNamespace(monotonic=lambda: elapsed[0]), raising=False
+    )
+    monkeypatch.setattr(event_pipe, "unbiased_monotonic", lambda: awake[0], raising=False)
+    frame = {"schema_version": 1, "type": "finish", "stream_id": "sleep-test"}
+    channel = uuid4().hex
+    with EventPipeServer(channel) as server, EventPipeClient(channel, control=True) as client:
+        server.accept(500)
+        receiver = server if control else client
+        operation = receiver._operation
+
+        def read_with_sleep(begin, timeout_ms):
+            count = operation(begin, timeout_ms)
+            elapsed[0] += 98.264
+            awake[0] += 0.01
+            return count
+
+        monkeypatch.setattr(receiver, "_operation", read_with_sleep)
+        if control:
+            client.request_finish("sleep-test")
+            assert server.receive_control(500) == frame
+        else:
+            server.send(frame)
+            assert client.receive(500) == frame
+        assert receiver.handle is not None
+
+
 def test_collector_retains_image_and_precise_identity_with_overflow_sequence():
     import ctypes as C
 

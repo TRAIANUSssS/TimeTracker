@@ -2,24 +2,35 @@
 
 import logging
 import threading
-import time
 from collections import deque
 
 import pywintypes
 
+from time_tracker.platform.windows.event_clock import unbiased_monotonic
 from time_tracker.platform.windows.event_pipe import EventPipeClient
 from time_tracker.platform.windows.event_stream import EventStream
 
 logger = logging.getLogger(__name__)
 
+HEALTH_TIMEOUT_SECONDS = 5
+INITIAL_READY_TIMEOUT_SECONDS = 20
+
 
 class ProcessEventSource:
-    def __init__(self, channel="default", *, capacity=4096, client_factory=EventPipeClient):
+    def __init__(
+        self,
+        channel="default",
+        *,
+        capacity=4096,
+        client_factory=EventPipeClient,
+        monotonic=unbiased_monotonic,
+    ):
         if capacity < 1:
             raise ValueError("Positive event queue capacity required")
         self.channel = channel
         self.capacity = capacity
         self.client_factory = client_factory
+        self._monotonic = monotonic
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
@@ -65,7 +76,8 @@ class ProcessEventSource:
                 "generation": self._generation,
                 "collector_pid": self._collector_pid,
                 "generations": self._generations,
-                "healthy": self._healthy and time.monotonic() - self._last_packet < 5,
+                "healthy": self._healthy
+                and self._monotonic() - self._last_packet < HEALTH_TIMEOUT_SECONDS,
                 "invalid": self._invalid,
                 "faults": self._faults,
                 "pending": len(self._queue),
@@ -75,7 +87,9 @@ class ProcessEventSource:
 
     def poll(self, limit=64):
         with self._lock:
-            healthy = self._healthy and time.monotonic() - self._last_packet < 5
+            healthy = (
+                self._healthy and self._monotonic() - self._last_packet < HEALTH_TIMEOUT_SECONDS
+            )
             return (
                 self._generation,
                 self._coverage,
@@ -105,7 +119,8 @@ class ProcessEventSource:
             try:
                 with self.client_factory(self.channel, control=True) as client:
                     stream = EventStream()
-                    last_packet = time.monotonic()
+                    last_packet = self._monotonic()
+                    ready_deadline = last_packet + INITIAL_READY_TIMEOUT_SECONDS
                     can_finish = sent_finish = False
                     while not self._stop.is_set():
                         if self._finishing.is_set() and stream.stream_id and not sent_finish:
@@ -117,12 +132,17 @@ class ProcessEventSource:
                             message = client.receive(500)
                         except TimeoutError:
                             if client.handle is None or (
-                                not self._finishing.is_set() and time.monotonic() - last_packet >= 5
+                                not self._finishing.is_set()
+                                and (
+                                    self._monotonic() >= ready_deadline
+                                    if stream.stream_id is None
+                                    else self._monotonic() - last_packet >= HEALTH_TIMEOUT_SECONDS
+                                )
                             ):
                                 raise
                             continue
                         records = stream.accept(message)
-                        last_packet = time.monotonic()
+                        last_packet = self._monotonic()
                         with self._lock:
                             if message["type"] == "ready":
                                 self._collector_pid = message.get("collector_pid")
@@ -155,7 +175,10 @@ class ProcessEventSource:
                         if stream.stopped:
                             break
             except (OSError, pywintypes.error, ValueError, RuntimeError, KeyError, TypeError):
-                logger.debug("Process event source unavailable", exc_info=True)
+                if self._healthy:
+                    logger.warning("Connected process event source interrupted", exc_info=True)
+                else:
+                    logger.debug("Process event source unavailable", exc_info=True)
             finally:
                 with self._lock:
                     self._healthy = False

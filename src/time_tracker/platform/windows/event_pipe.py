@@ -3,7 +3,6 @@
 import json
 import re
 import struct
-import time
 
 import pywintypes
 import win32api
@@ -12,6 +11,8 @@ import win32event
 import win32file
 import win32pipe
 import win32security
+
+from time_tracker.platform.windows.event_clock import unbiased_monotonic
 
 MAX_FRAME = 2 * 1024 * 1024
 
@@ -172,14 +173,16 @@ class EventPipeClient(EventPipe):
         )
 
     def receive(self, timeout_ms=5000, *, max_frame=MAX_FRAME):
-        deadline = time.monotonic() + timeout_ms / 1000
+        # Use the same sleep-excluding clock as reader liveness. A pending read
+        # can return its header after wake; sleep must not expire the body read.
+        deadline = unbiased_monotonic() + timeout_ms / 1000
         received_any = False
 
         def read_exact(size):
             nonlocal received_any
             data = bytearray()
             while len(data) < size:
-                remaining_ms = int((deadline - time.monotonic()) * 1000)
+                remaining_ms = int((deadline - unbiased_monotonic()) * 1000)
                 if remaining_ms < 1:
                     raise TimeoutError("Event frame read timed out")
                 buffer = win32file.AllocateReadBuffer(size - len(data))

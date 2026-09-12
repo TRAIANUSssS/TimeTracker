@@ -313,6 +313,67 @@ def test_real_pipe_to_worker_to_sqlite_preserves_short_interval(database):
         assert not source._thread.is_alive()
 
 
+def test_reader_allows_slow_initial_ready_without_reconnecting():
+    """ETW startup can take longer than the steady-state five-second heartbeat."""
+    import threading
+
+    from time_tracker.platform.windows.event_source import ProcessEventSource
+
+    now = [0.0]
+    clients = []
+    release = threading.Event()
+
+    class SlowReadyClient:
+        def __init__(self, *_args, **_kwargs):
+            self.handle = object()
+            self.calls = 0
+            clients.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.handle = None
+
+        def receive(self, *_args):
+            self.calls += 1
+            if self.calls <= 12:
+                now[0] += 0.5
+                raise TimeoutError()
+            if self.calls == 13:
+                return {
+                    "schema_version": 1,
+                    "stream_id": "slow-ready",
+                    "type": "ready",
+                    "message_sequence": 1,
+                    "started_at_ns": 1,
+                }
+            if self.calls == 14:
+                return {
+                    "schema_version": 1,
+                    "stream_id": "slow-ready",
+                    "type": "batch",
+                    "message_sequence": 2,
+                    "healthy": True,
+                    "data_complete": True,
+                    "records": [],
+                }
+            release.wait(0.05)
+            raise TimeoutError()
+
+    source = ProcessEventSource(
+        "slow-ready", client_factory=SlowReadyClient, monotonic=lambda: now[0]
+    )
+    source.start()
+    try:
+        assert source.connected.wait(2)
+        assert len(clients) == 1
+        assert source.status()["generation"] == "slow-ready"
+    finally:
+        release.set()
+        source.close()
+
+
 def test_process_boundary_rolls_back_both_history_and_ram(database):
     from tests.test_session_manager import InstrumentedStore
 
