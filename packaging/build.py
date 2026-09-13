@@ -74,6 +74,31 @@ def main():
         check=True,
     )
     package = output / "TimeTracker"
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            "--noconfirm",
+            "--onedir",
+            "--windowed",
+            "--name",
+            "TimeTrackerETW",
+            "--distpath",
+            str(package / "collector"),
+            "--workpath",
+            str(work / "etw-helper"),
+            "--specpath",
+            str(work),
+            "--paths",
+            str(ROOT / "src"),
+            "--hidden-import",
+            "win32timezone",
+            str(ROOT / "packaging" / "etw_entrypoint.py"),
+        ],
+        cwd=ROOT,
+        check=True,
+    )
     shutil.copyfile(ROOT / "packaging" / "README.txt", package / "README.txt")
     license_dir = package / "licenses"
     license_dir.mkdir(exist_ok=True)

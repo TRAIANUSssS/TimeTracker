@@ -6,6 +6,7 @@ const browser = await chromium.launch({
     channel: process.env.PLAYWRIGHT_CHANNEL || "msedge",
     headless: true,
 });
+await mkdir("test-results", { recursive: true });
 try {
     const page = await browser.newPage({
         viewport: { width: 1920, height: 1080 },
@@ -46,9 +47,16 @@ try {
     await page.getByRole("button", { name: "Настройки", exact: true }).click();
     await page.reload();
     await page
-        .getByRole("heading", { name: "Настройки появятся позже" })
+        .getByRole("heading", { name: "Режим сбора", exact: true })
         .waitFor();
-    await page.getByRole("button", { name: "Вернуться на основную" }).click();
+    await page.getByRole("radio", { name: /^Обычный/ }).waitFor();
+    if (await page.getByRole("alert").count())
+        throw new Error("Collection settings request failed");
+    await page.screenshot({
+        path: "test-results/packaged-settings.png",
+        fullPage: true,
+    });
+    await page.getByRole("link", { name: "Основная", exact: true }).click();
     await page.getByTestId("timeline").waitFor();
     await page.waitForTimeout(350);
     await mkdir("test-results", { recursive: true });

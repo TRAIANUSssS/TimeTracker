@@ -121,7 +121,7 @@ def collect(sink, seconds, *, session_factory=EtwSession, consumer_factory=EtwCo
             collector_pid=os.getpid(),
             capabilities=["finish"] if receive_control else [],
         )
-        deadline = began + seconds
+        deadline = began + seconds if seconds is not None else float("inf")
         while time.monotonic() < deadline:
             batch = drain()
             if batch["source_done"]:

@@ -7,6 +7,7 @@ import { AppsTable, Empty, ErrorState, TableSkeleton } from "./Table";
 import { Heatmap, Timeline, Tip } from "./Activity";
 import { defaults, duration } from "./format";
 import { useDashboard } from "./requests";
+import { Settings } from "./Settings";
 
 function App() {
   const [filters, setFilters] = useState(defaults),
@@ -210,14 +211,7 @@ function App() {
             />
           </div>
         )}
-        {path === "/settings" && (
-          <div className="placeholder-card">
-            <Empty title="Настройки появятся позже" />
-            <button className="text-button" onClick={() => navigate("/")}>
-              Вернуться на основную
-            </button>
-          </div>
-        )}
+        {path === "/settings" && <Settings />}
       </main>
     </>
   );

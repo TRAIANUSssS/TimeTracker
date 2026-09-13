@@ -26,10 +26,12 @@ def user_sid():
         token.Close()
 
 
-def pipe_name(channel="default"):
+def pipe_name(channel="default", *, owner_sid=None):
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", channel):
         raise ValueError("Channel must contain 1..64 ASCII letters, digits, underscores or hyphens")
-    return rf"\\.\pipe\TimeTracker-ETW-{user_sid()}-{channel}"
+    sid = user_sid() if owner_sid is None else owner_sid
+    sid = win32security.ConvertSidToStringSid(win32security.ConvertStringSidToSid(sid))
+    return rf"\\.\pipe\TimeTracker-ETW-{sid}-{channel}"
 
 
 def encode_frame(message):
@@ -117,12 +119,13 @@ class EventPipe:
 
 
 class EventPipeServer(EventPipe):
-    def __init__(self, channel="default"):
-        name = pipe_name(channel)
+    def __init__(self, channel="default", *, owner_sid=None):
+        sid = user_sid() if owner_sid is None else owner_sid
+        name = pipe_name(channel, owner_sid=sid)
         security = pywintypes.SECURITY_ATTRIBUTES()
         security.SECURITY_DESCRIPTOR = (
             win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
-                f"D:P(A;;GA;;;SY)(A;;GA;;;{user_sid()})S:(ML;;NW;;;ME)",
+                f"D:P(A;;GA;;;SY)(A;;GA;;;{sid})S:(ML;;NW;;;ME)",
                 win32security.SDDL_REVISION_1,
             )
         )

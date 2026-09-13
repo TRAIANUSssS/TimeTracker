@@ -35,6 +35,22 @@ const segments = [
 ];
 
 async function fixture(page) {
+  await page.route("**/settings/collection", (route) =>
+    route.fulfill({
+      json: {
+        mode: "polling",
+        active_mode: "polling",
+        effective_mode: "polling",
+        installed: false,
+        can_install: true,
+        busy: false,
+        error: null,
+        restart_required: false,
+        external: false,
+        token: "test-token",
+      },
+    }),
+  );
   await page.clock.setFixedTime(new Date("2026-09-08T22:00:00+03:00"));
   const counts = { apps: 0, system: 0, timeline: 0, activity: 0 };
   await page.route("**/applications/*/icon", (route) =>
@@ -255,10 +271,14 @@ test("delayed skeleton, section failure retry, empty metadata and placeholder na
     page.getByText("Расширенная статистика появится позже"),
   ).toBeVisible();
   await page.getByRole("button", { name: "Настройки", exact: true }).click();
-  await expect(page.getByText("Настройки появятся позже")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Режим сбора", exact: true }),
+  ).toBeVisible();
   await page.reload();
-  await expect(page.getByText("Настройки появятся позже")).toBeVisible();
-  await page.getByRole("button", { name: "Вернуться на основную" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Режим сбора", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Основная", exact: true }).click();
   await expect(page.getByLabel("Начало времени", { exact: true })).toHaveValue(
     "00:00",
   );

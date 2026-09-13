@@ -2,11 +2,13 @@
 
 import hashlib
 import json
+import secrets
 import sqlite3
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, ConfigDict
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
@@ -32,7 +34,12 @@ from time_tracker.runtime import SystemClock
 from time_tracker.storage.stats import Statistics, application_json
 
 
-def create_app(database, *, commands=None, clock=None) -> FastAPI:
+class CollectionAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["polling", "etw", "install", "remove"]
+
+
+def create_app(database, *, commands=None, clock=None, collection_mode=None) -> FastAPI:
     clock = clock if clock is not None else SystemClock()
     app = FastAPI(title="TimeTracker local API", version=__version__)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
@@ -51,6 +58,28 @@ def create_app(database, *, commands=None, clock=None) -> FastAPI:
     @app.exception_handler(sqlite3.Error)
     async def storage_error(request, error):
         return JSONResponse({"detail": "Storage temporarily unavailable"}, status_code=503)
+
+    @app.get("/settings/collection")
+    def collection_settings():
+        if collection_mode is None:
+            raise HTTPException(503, "Настройки сбора доступны в работающем приложении.")
+        return collection_mode.status()
+
+    @app.post("/settings/collection", status_code=202)
+    def change_collection(settings: CollectionAction, request: Request):
+        if collection_mode is None:
+            raise HTTPException(503, "Настройки сбора недоступны.")
+        if not secrets.compare_digest(
+            request.headers.get("x-timetracker-token", ""), collection_mode.token
+        ):
+            raise HTTPException(403, "Обновите страницу настроек и повторите действие.")
+        try:
+            collection_mode.request(settings.action)
+        except (RuntimeError, ValueError) as error:
+            raise HTTPException(409, str(error)) from error
+        except OSError as error:
+            raise HTTPException(503, "Не удалось сохранить или проверить настройки.") from error
+        return collection_mode.status()
 
     def stats(filters, operation, *, response=None, **kwargs):
         now = clock.now_ms()

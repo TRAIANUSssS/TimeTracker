@@ -21,6 +21,7 @@ WM_WORKER_DONE = win32con.WM_APP + 2
 EXIT_COMMAND = 1003
 DASHBOARD_COMMAND = 1001
 AUTOSTART_COMMAND = 1004
+SETTINGS_COMMAND = 1005
 
 
 class TrayApplication:
@@ -125,6 +126,7 @@ class TrayApplication:
         menu = win32gui.CreatePopupMenu()
         try:
             win32gui.AppendMenu(menu, win32con.MF_STRING, DASHBOARD_COMMAND, "Открыть dashboard")
+            win32gui.AppendMenu(menu, win32con.MF_STRING, SETTINGS_COMMAND, "Настройки сбора")
             win32gui.AppendMenu(
                 menu, win32con.MF_STRING | win32con.MF_GRAYED, 1002, "Приостановить запись"
             )
@@ -165,6 +167,8 @@ class TrayApplication:
                 self._open_dashboard()
             elif command == AUTOSTART_COMMAND:
                 self._toggle_autostart()
+            elif command == SETTINGS_COMMAND and self.service is not None:
+                webbrowser.open(self.service.url + "/settings", new=2)
         finally:
             win32gui.DestroyMenu(menu)
 
