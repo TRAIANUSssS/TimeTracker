@@ -46,6 +46,7 @@ class TrayApplication:
                 logger.debug("Could not load tray artwork; using system icon")
         self._registered = False
         self._power_registration = None
+        self._foreground_hooks = None
         self._started = False
         self._closing = False
         self.worker = None
@@ -85,6 +86,19 @@ class TrayApplication:
             self._registered = True
             self._power_registration = self.api.register_power_notifications(self.hwnd)
             logger.info("Registered Windows suspend/resume notifications")
+            from time_tracker.platform.windows.native import ForegroundHooks
+
+            try:
+                self._foreground_hooks = ForegroundHooks(self._foreground_event)
+                self._foreground_hooks.start()
+                self.controller.set_foreground_hooks_active(True)
+                logger.info("Registered foreground/title WinEvent hooks")
+            except OSError:
+                self._foreground_hooks = None
+                self.controller.set_foreground_hooks_active(False)
+                logger.warning(
+                    "Foreground/title hooks unavailable; using polling fallback", exc_info=True
+                )
             self.worker.start()
             self._started = True
             if self.show_icon:
@@ -192,6 +206,11 @@ class TrayApplication:
         if self.worker is not None:
             self.worker.notify(kind)
 
+    def _foreground_event(self, hwnd, title_changed):
+        # WinEvent callbacks run on the window thread: do no resolution or I/O here.
+        if self.worker is not None:
+            self.worker.notify_foreground(hwnd, title_changed=title_changed)
+
     def _window_proc(self, hwnd, message, wparam, lparam):
         entered = time.monotonic()
         try:
@@ -286,6 +305,12 @@ class TrayApplication:
         self._started = False
         if self.hwnd and win32gui.IsWindow(self.hwnd):
             self.api.user32.KillTimer(self.hwnd, 1)
+            if self._foreground_hooks is not None:
+                try:
+                    self._foreground_hooks.close()
+                except OSError:
+                    logger.warning("Failed to unregister foreground/title hooks", exc_info=True)
+                self._foreground_hooks = None
             if self._power_registration is not None:
                 try:
                     self.api.unregister_power_notifications(self._power_registration)

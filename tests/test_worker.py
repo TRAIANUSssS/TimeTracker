@@ -62,6 +62,9 @@ class Provider:
     def foreground(self):
         return None
 
+    def foreground_for_window(self, hwnd, *, title_required):
+        return None
+
     def is_locked(self):
         return self.locked
 
@@ -230,6 +233,39 @@ def test_overflow_recovers_unknown_tail_then_reconciles(setup_worker):
         (9000, 9000, "normal"),
     ]
     assert rows(database, "SELECT DISTINCT pid FROM process_sessions") == [(42,)]
+
+
+def test_duplicate_foreground_hooks_are_coalesced_without_lifecycle_overflow(setup_worker):
+    worker, _, _ = setup_worker
+    worker.notify_foreground(42, title_changed=False)
+    worker.notify_foreground(42, title_changed=False)
+    worker.notify_foreground(42, title_changed=True)
+    assert [(item.kind, item.hwnd, item.title_changed) for item in worker._queue] == [
+        ("foreground", 42, False),
+        ("foreground", 42, True),
+    ]
+    assert not worker._gap
+
+
+def test_newer_hook_event_interrupts_old_resolution_without_stopping_worker(setup_worker):
+    worker, provider, _ = setup_worker
+
+    def slow_foreground(*_args, **_kwargs):
+        provider.pause()
+        return None
+
+    provider.foreground_for_window = slow_foreground
+    worker.start()
+    assert worker.ready.wait(5)
+    worker.notify_foreground(42, title_changed=False)
+    assert provider.entered.wait(5)
+    worker.notify_foreground(43, title_changed=False)
+    provider.release.set()
+    wait_until(lambda: not worker._queue)
+    assert worker.error is None
+    worker.request_stop()
+    assert worker.done.wait(5)
+    assert worker.error is None
 
 
 def test_stop_after_overflow_aborts_without_claiming_normal_history(setup_worker):

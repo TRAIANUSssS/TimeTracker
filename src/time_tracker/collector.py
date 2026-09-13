@@ -47,6 +47,7 @@ class CollectionController:
         self.clock = clock
         self.monotonic = monotonic
         self._next_fast = 0.0
+        self._next_foreground = 0.0
         self._next_process = 0.0
         self._next_heartbeat = 0.0
         self._pending_resume = None
@@ -62,6 +63,7 @@ class CollectionController:
         self._event_generation = None
         self._event_healthy = False
         self._event_pending = deque()
+        self._foreground_hooks_active = False
         if shutdown_timeout <= 0:
             raise ValueError("Positive shutdown timeout required")
         self.shutdown_timeout = shutdown_timeout
@@ -157,8 +159,38 @@ class CollectionController:
     def _reset_deadlines(self):
         now = self.monotonic()
         self._next_fast = now + 2
+        self._next_foreground = now + (20 if self._foreground_hooks_active else 2)
         self._next_process = now + 5
         self._next_heartbeat = now + 5
+
+    def set_foreground_hooks_active(self, active: bool) -> None:
+        """Called by the native window before the collection worker starts."""
+        self._foreground_hooks_active = bool(active)
+
+    def foreground_events_lost(self) -> None:
+        """A bounded hook queue dropped data: immediately reconcile via polling."""
+        self._next_foreground = 0
+        count("foreground_hooks.queue_dropped")
+
+    def foreground_changed(self, hwnd: int, title_changed: bool, observed_at: int) -> None:
+        state = self.runtime.state
+        if state is None or state.flags.is_locked or state.flags.is_sleeping:
+            return
+        if title_changed and (state.foreground is None or state.foreground.session.hwnd != hwnd):
+            return
+
+        def title_required(process):
+            executable = state.executables.get(process.executable_path or "")
+            if executable is None:
+                # A first sighting creates an application with the default title policy.
+                return True
+            application = state.applications.get(executable.application_id)
+            return application is None or application.track_titles
+
+        foreground = self.provider.foreground_for_window(hwnd, title_required=title_required)
+        at = max(observed_at, self.clock.now_ms(), state.last_event_at)
+        self._handle(ForegroundChanged(at, foreground))
+        count("foreground_hooks.title" if title_changed else "foreground_hooks.foreground")
 
     def notify(self, kind, observed_at=None, *, defer_resume=False):
         if observed_at is not None and observed_at < self.runtime.state.last_event_at:
@@ -202,7 +234,7 @@ class CollectionController:
 
     def observation_interrupted(self):
         count("collector.observation_discarded")
-        self._next_process = self._next_fast = self._next_heartbeat = 0
+        self._next_process = self._next_fast = self._next_foreground = self._next_heartbeat = 0
         self._user_resumed = False
 
     def _resume(self):
@@ -316,7 +348,8 @@ class CollectionController:
                 raise
             at = self.clock.now_ms()
             self._handle(IdleObserved(at, at - idle))
-            if not locked:
+            if not locked and now >= self._next_foreground:
+                self._next_foreground = now + (20 if self._foreground_hooks_active else 2)
                 foreground = self.provider.foreground()
                 self._handle(ForegroundChanged(self.clock.now_ms(), foreground))
         if now >= self._next_heartbeat:

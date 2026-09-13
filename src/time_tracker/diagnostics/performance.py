@@ -140,7 +140,8 @@ class Recorder:
                 "environment": metadata if metadata is not None else environment(),
                 "intervals_seconds": {
                     "process": 5,
-                    "foreground_idle": 2,
+                    "foreground_fallback": 20,
+                    "idle_lock": 2,
                     "power": 2,
                     "heartbeat": 5,
                 },

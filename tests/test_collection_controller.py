@@ -51,6 +51,12 @@ class Provider:
         self.foreground_calls += 1
         return self.window
 
+    def foreground_for_window(self, hwnd, *, title_required):
+        if self.window is None or self.window.hwnd != hwnd:
+            return None
+        title = self.window.title if title_required(self.item) else None
+        return ForegroundObservation(self.item, hwnd, title)
+
     def idle_ms(self):
         if self.idle_fail:
             raise OSError("idle unavailable")
@@ -103,6 +109,39 @@ def test_failed_process_poll_keeps_existing_running(controller):
     clock.at = 6000
     collector.tick()
     assert len(collector.runtime.state.running_processes) == 1
+
+
+def test_foreground_hook_resolves_only_its_window_and_splits_title(controller, database):
+    collector, provider, clock = controller
+    clock.at = 1100
+    collector.foreground_changed(1, False, clock.at)
+    # Repeated foreground notifications for the same HWND are harmless.
+    clock.at = 1200
+    collector.foreground_changed(1, False, clock.at)
+    provider.window = ForegroundObservation(provider.item, 1, "Renamed document")
+    clock.at = 1300
+    collector.foreground_changed(1, True, clock.at)
+    # A stale name-change for another HWND cannot close the current foreground.
+    clock.at = 1400
+    collector.foreground_changed(2, True, clock.at)
+    with database.reader() as connection:
+        rows = connection.execute(
+            "SELECT window_title,started_at,ended_at FROM foreground_sessions ORDER BY id"
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("Document", 1000, 1300),
+        ("Renamed document", 1300, None),
+    ]
+    assert provider.foreground_calls == 1  # Only the startup snapshot used global polling.
+
+
+def test_hook_queue_loss_forces_immediate_foreground_reconciliation(controller):
+    collector, provider, clock = controller
+    collector.set_foreground_hooks_active(True)
+    clock.at = 3000
+    collector.foreground_events_lost()
+    collector.tick()
+    assert provider.foreground_calls == 2
 
 
 def test_sleep_stops_polling_and_heartbeat_until_fresh_resume(controller):

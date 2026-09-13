@@ -13,8 +13,11 @@
 единственного владельца session manager и SQLite writer. SessionManager и подключения
 для записи создаются в этом потоке; там же работают provider/resolver, collector и
 очередь изменений настроек API. Оконный поток не читает runtime.state.
-Worker проверяет сроки задач с ожиданием до 250 ms;
-частоты foreground/idle — 2 s, процессов/heartbeat — 5 s. Это целевые интервалы:
+Worker проверяет сроки задач с ожиданием до 250 ms. Idle и lock проверяются каждые
+2 s, процессы/heartbeat — каждые 5 s. Foreground и title приходят через
+`SetWinEventHook` (`EVENT_SYSTEM_FOREGROUND`, `EVENT_OBJECT_NAMECHANGE`); при
+здоровом hook их polling-сверка выполняется раз в 20 s, при недоступном hook —
+каждые 2 s. Это целевые интервалы:
 медленный Windows API или первое чтение metadata могут задержать текущий цикл.
 
 Расписание использует `time.monotonic()`, история — UTC milliseconds. Timestamp
@@ -93,7 +96,13 @@ running при длительном отказе источника, поэто�
 в списке с неизвестным путём; статистика не получает вымышленную связь с приложением.
 Новый экземпляр с тем же PID не ждёт старого retry deadline. Если полный путь уже
 подтверждён, он не перечитывается; временный AccessDenied к нему не стирает кеш.
-Интервалы polling процессов/foreground/heartbeat сохранены: 5/2/5 секунд.
+WinEvent callback передаёт только HWND и тип события. Worker повторно проверяет,
+что HWND всё ещё foreground, и разрешает только его владельца без полного process
+snapshot. `EVENT_OBJECT_NAMECHANGE` принимается лишь от текущего foreground окна;
+title не читается для уже известного приложения с `track_titles = false`. Повторы
+одинаковых hook-событий объединяются. Потеря hook-события в ограниченной очереди
+немедленно вызывает foreground polling-сверку, но не превращается в lifecycle gap.
+Hooks снимаются до уничтожения native window.
 
 Foreground читается через `GetForegroundWindow`, `GetWindowThreadProcessId` и
 `GetWindowText`. После разрешения metadata повторно проверяются HWND и владелец.

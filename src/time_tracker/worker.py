@@ -17,6 +17,8 @@ class Notification:
     kind: str
     observed_at: int
     queued_at: float
+    hwnd: int | None = None
+    title_changed: bool = False
 
 
 class CollectionWorker:
@@ -35,6 +37,7 @@ class CollectionWorker:
         self._stopping = False
         self._abort = False
         self._gap = False
+        self._foreground_gap = False
         self._sleeping = False
         self._thread = None
 
@@ -58,6 +61,29 @@ class CollectionWorker:
             else:
                 self._queue.append(item)
                 count("queue.enqueued")
+            self._condition.notify()
+
+    def notify_foreground(self, hwnd: int, *, title_changed: bool) -> None:
+        """Accept a tiny WinEvent payload; resolution remains on the owner thread."""
+        with self._condition:
+            if self._stopping:
+                return
+            item = Notification(
+                "foreground", self.controller.clock.now_ms(), time.monotonic(), hwnd, title_changed
+            )
+            if (
+                self._queue
+                and self._queue[-1].kind == item.kind
+                and self._queue[-1].hwnd == hwnd
+                and self._queue[-1].title_changed == title_changed
+            ):
+                count("foreground_hooks.duplicate")
+            elif len(self._queue) == self.capacity:
+                self._foreground_gap = True
+                count("foreground_hooks.dropped")
+            else:
+                self._queue.append(item)
+                count("foreground_hooks.enqueued")
             self._condition.notify()
 
     def request_stop(self, *, abort=False):
@@ -122,6 +148,8 @@ class CollectionWorker:
             while True:
                 with self._condition:
                     gap = self._gap
+                    foreground_gap = self._foreground_gap
+                    self._foreground_gap = False
                     item = self._queue.popleft() if self._queue and not gap else None
                     stopping, abort = self._stopping, self._abort
                 if abort:
@@ -142,10 +170,22 @@ class CollectionWorker:
                     if not started:
                         break
                     continue
+                if foreground_gap:
+                    self.controller.foreground_events_lost()
                 if item is not None:
                     latency("queue.wait", time.monotonic() - item.queued_at)
-                    logger.info("Windows notification: %s", item.kind)
-                    self.controller.notify(item.kind, item.observed_at, defer_resume=True)
+                    if item.kind == "foreground":
+                        try:
+                            self.controller.foreground_changed(
+                                item.hwnd, item.title_changed, item.observed_at
+                            )
+                        except ObservationInterrupted:
+                            # A newer hook/lifecycle signal arrived while resolving this
+                            # HWND. Its observation is obsolete; process the queued fact.
+                            self.controller.observation_interrupted()
+                    else:
+                        logger.info("Windows notification: %s", item.kind)
+                        self.controller.notify(item.kind, item.observed_at, defer_resume=True)
                     count("queue.handled")
                     continue
                 if stopping:

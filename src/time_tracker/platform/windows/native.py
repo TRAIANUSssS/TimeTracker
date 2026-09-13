@@ -127,11 +127,25 @@ class WindowsAPI:
     def foreground() -> tuple[int, int, str] | None:
         try:
             hwnd = win32gui.GetForegroundWindow()
-            if not hwnd or not win32gui.IsWindow(hwnd):
+            return WindowsAPI.window(hwnd, read_title=True)
+        except win32gui.error as error:
+            raise OSError("Windows foreground window is unavailable") from error
+
+    @staticmethod
+    def window(hwnd: int, *, read_title: bool) -> tuple[int, int, str | None] | None:
+        """Read one foreground HWND without enumerating processes.
+
+        The second foreground check makes a queued WinEvent harmless when the user
+        has already switched to another window by the time the collector handles it.
+        """
+        try:
+            if not hwnd or not win32gui.IsWindow(hwnd) or win32gui.GetForegroundWindow() != hwnd:
                 return None
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
-            title = win32gui.GetWindowText(hwnd)
-            if not pid or win32gui.GetForegroundWindow() != hwnd:
+            if not pid:
+                return None
+            title = win32gui.GetWindowText(hwnd) if read_title else None
+            if win32gui.GetForegroundWindow() != hwnd:
                 return None
             return hwnd, pid, title
         except win32gui.error as error:
@@ -155,3 +169,78 @@ class WindowsAPI:
             if any(values):
                 return tuple(values)
         return None, None
+
+
+class ForegroundHooks:
+    """Own a pair of out-of-context WinEvent hooks on the window message thread."""
+
+    EVENT_SYSTEM_FOREGROUND = 0x0003
+    EVENT_OBJECT_NAMECHANGE = 0x800C
+    OBJID_WINDOW = 0
+    CHILDID_SELF = 0
+    WINEVENT_OUTOFCONTEXT = 0
+
+    def __init__(self, callback):
+        self._callback = callback
+        self._proc = None
+        self._handles = []
+        self._user32 = ctypes.WinDLL("user32", use_last_error=True)
+        self._configure()
+
+    def _configure(self):
+        self._proc_type = ctypes.WINFUNCTYPE(
+            None,
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.HWND,
+            ctypes.c_long,
+            ctypes.c_long,
+            wintypes.DWORD,
+            wintypes.DWORD,
+        )
+        self._user32.SetWinEventHook.argtypes = [
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HMODULE,
+            self._proc_type,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+        ]
+        self._user32.SetWinEventHook.restype = wintypes.HANDLE
+        self._user32.UnhookWinEvent.argtypes = [wintypes.HANDLE]
+        self._user32.UnhookWinEvent.restype = wintypes.BOOL
+
+    def start(self) -> None:
+        if self._handles:
+            raise RuntimeError("Foreground hooks already started")
+
+        @self._proc_type
+        def dispatch(_hook, event, hwnd, object_id, child_id, _thread, _time):
+            if (
+                hwnd
+                and object_id == self.OBJID_WINDOW
+                and child_id == self.CHILDID_SELF
+                and event in (self.EVENT_SYSTEM_FOREGROUND, self.EVENT_OBJECT_NAMECHANGE)
+            ):
+                self._callback(int(hwnd), event == self.EVENT_OBJECT_NAMECHANGE)
+
+        self._proc = dispatch  # ctypes must retain the callback while hooks are live.
+        try:
+            for event in (self.EVENT_SYSTEM_FOREGROUND, self.EVENT_OBJECT_NAMECHANGE):
+                handle = self._user32.SetWinEventHook(
+                    event, event, None, self._proc, 0, 0, self.WINEVENT_OUTOFCONTEXT
+                )
+                if not handle:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                self._handles.append(handle)
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        while self._handles:
+            handle = self._handles.pop()
+            if not self._user32.UnhookWinEvent(handle):
+                raise ctypes.WinError(ctypes.get_last_error())
+        self._proc = None

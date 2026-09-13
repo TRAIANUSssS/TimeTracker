@@ -102,6 +102,25 @@ class WindowsProvider:
             logger.warning("Foreground observation unavailable")
             return None
 
+    @measured("foreground.hook_resolve")
+    def foreground_for_window(self, hwnd, *, title_required):
+        """Resolve a hook HWND only if it is still the foreground window."""
+        try:
+            window = self.api.window(hwnd, read_title=False)
+            if window is None:
+                return None
+            _, pid, _ = window
+            process = self.processes.by_pid(pid)
+            if process is None:
+                return None
+            current = self.api.window(hwnd, read_title=title_required(process))
+            if current is None or current[:2] != (hwnd, pid):
+                return None
+            return ForegroundObservation(process, hwnd, current[2])
+        except (OSError, psutil.Error):
+            logger.warning("Foreground hook observation unavailable")
+            return None
+
     @measured("provider.snapshot")
     def snapshot(self):
         processes = self.processes.snapshot()
