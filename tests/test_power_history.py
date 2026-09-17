@@ -216,27 +216,158 @@ def test_controller_replays_user_sleep_sequence_with_delayed_log_delivery(databa
 
 
 def test_real_system_log_query_uses_utc_z_suffix(monkeypatch):
+    from time_tracker.platform.windows.power_history import PowerHistory
+
+    event_log = EventLog()
+    install_event_log(monkeypatch, event_log)
+    PowerHistory().read(int(datetime(2026, 9, 8, 17, tzinfo=UTC).timestamp() * 1000))
+    assert "2026-09-08T17:00:00.000Z" in event_log.queries[0][1]
+
+
+class EventLog:
+    class Handle:
+        def __init__(self, events):
+            self.events = events
+            self.index = 0
+            self.closed = False
+
+        def Close(self):
+            self.closed = True
+
+    class Bookmark:
+        def __init__(self):
+            self.event = None
+            self.closed = False
+
+        def Close(self):
+            self.closed = True
+
+    class Event:
+        def __init__(self, record_id, event_id, at):
+            self.record_id = record_id
+            self.event_id = event_id
+            self.at = at
+            self.closed = False
+
+        def Close(self):
+            self.closed = True
+
+    EvtQueryForwardDirection = 1
+    EvtQueryReverseDirection = 2
+    EvtSeekRelativeToLast = 3
+    EvtSeekRelativeToBookmark = 4
+    EvtSeekStrict = 8
+    EvtRenderEventXml = 1
+
+    def __init__(self, events=()):
+        self.events = list(events)
+        self.queries = []
+        self.seeks = []
+        self.fail_seek = False
+        self.seek_error = None
+
+    @staticmethod
+    def _xml(event):
+        stamp = datetime.fromtimestamp(event.at / 1000, UTC).isoformat(timespec="milliseconds")
+        return f"""<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System>
+        <Provider Name="Microsoft-Windows-Kernel-Power"/><EventID>{event.event_id}</EventID>
+        <TimeCreated SystemTime="{stamp.replace("+00:00", "Z")}"/>
+        <EventRecordID>{event.record_id}</EventRecordID></System></Event>"""
+
+    def EvtQuery(self, _channel, flags, xpath):
+        self.queries.append((flags, xpath))
+        events = (
+            list(reversed(self.events))
+            if flags == self.EvtQueryReverseDirection
+            else list(self.events)
+        )
+        return self.Handle(events)
+
+    def EvtNext(self, handle, count):
+        result = handle.events[handle.index : handle.index + count]
+        handle.index += len(result)
+        return result
+
+    def EvtCreateBookmark(self, _xml):
+        return self.Bookmark()
+
+    @staticmethod
+    def EvtUpdateBookmark(bookmark, event):
+        bookmark.event = event
+
+    def EvtSeek(self, handle, position, flags, bookmark, _timeout):
+        if flags == self.EvtSeekRelativeToLast:
+            handle.index = len(handle.events) + position
+            return
+        self.seeks.append((position, bookmark.event.record_id if bookmark.event else None, flags))
+        if self.seek_error is not None:
+            error, self.seek_error = self.seek_error, None
+            raise error
+        if self.fail_seek:
+            self.fail_seek = False
+            raise OSError("bookmark invalid after log rotation")
+        index = next(
+            index
+            for index, event in enumerate(handle.events)
+            if event.record_id == bookmark.event.record_id
+        )
+        handle.index = index + position
+
+    @staticmethod
+    def EvtRender(event, _flag):
+        return EventLog._xml(event)
+
+
+def install_event_log(monkeypatch, event_log):
     import sys
+
+    monkeypatch.setitem(sys.modules, "win32evtlog", event_log)
+
+
+def test_power_history_uses_bookmark_and_retains_open_pair(monkeypatch):
+    from time_tracker.platform.windows.power_history import EVENT_QUERY, PowerHistory
+
+    event_log = EventLog((EventLog.Event(1, 506, 1000),))
+    install_event_log(monkeypatch, event_log)
+    history = PowerHistory()
+    assert history.read(1000) == ((), True)
+    event_log.events.append(EventLog.Event(2, 507, 2000))
+    assert history.read(1000) == (((1000, 2000),), False)
+    assert event_log.queries[0][0] == event_log.EvtQueryForwardDirection
+    assert "TimeCreated" in event_log.queries[0][1]
+    assert event_log.queries[1] == (event_log.EvtQueryForwardDirection, EVENT_QUERY)
+    assert event_log.seeks == [
+        (1, 1, event_log.EvtSeekRelativeToBookmark | event_log.EvtSeekStrict)
+    ]
+
+
+def test_invalid_power_bookmark_rebuilds_current_run_after_log_rotation(monkeypatch):
+    from time_tracker.platform.windows.power_history import PowerHistory
+
+    event_log = EventLog((EventLog.Event(1, 506, 1000),))
+    install_event_log(monkeypatch, event_log)
+    history = PowerHistory()
+    assert history.read(1000) == ((), True)
+    # The record ID was reused after rotation, so seek must fail and only the
+    # current run is replayed from its timestamp filter.
+    event_log.events = [EventLog.Event(1, 506, 1100), EventLog.Event(2, 507, 2100)]
+    event_log.fail_seek = True
+    assert history.read(1000) == (((1100, 2100),), False)
+    assert sum("TimeCreated" in query for _, query in event_log.queries) == 2
+
+
+def test_native_invalid_bookmark_error_rebuilds_current_run(monkeypatch):
+    import pywintypes
 
     from time_tracker.platform.windows.power_history import PowerHistory
 
-    class Handle:
-        def Close(self):
-            pass
-
-    calls = []
-
-    def query(channel, flags, xpath):
-        calls.append(xpath)
-        return Handle()
-
-    monkeypatch.setitem(
-        sys.modules,
-        "win32evtlog",
-        SimpleNamespace(EvtQuery=query, EvtQueryForwardDirection=1, EvtNext=lambda *args: ()),
-    )
-    PowerHistory().read(int(datetime(2026, 9, 8, 17, tzinfo=UTC).timestamp() * 1000))
-    assert "2026-09-08T17:00:00.000Z" in calls[0]
+    event_log = EventLog((EventLog.Event(1, 506, 1000),))
+    install_event_log(monkeypatch, event_log)
+    history = PowerHistory()
+    history.read(1000)
+    event_log.events.append(EventLog.Event(2, 507, 2000))
+    event_log.seek_error = pywintypes.error(1168, "EvtSeek", "Element not found")
+    assert history.read(1000) == (((1000, 2000),), False)
 
 
 def test_unlock_user_boundary_precedes_slow_full_snapshot(database):

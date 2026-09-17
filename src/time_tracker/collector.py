@@ -388,3 +388,5 @@ class CollectionController:
     def close_sources(self):
         if self.process_events is not None:
             self.process_events.close()
+        if self.power_history is not None and hasattr(self.power_history, "close"):
+            self.power_history.close()
