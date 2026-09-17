@@ -374,6 +374,89 @@ def test_reader_allows_slow_initial_ready_without_reconnecting():
         source.close()
 
 
+def test_reader_keeps_established_pipe_during_a_heartbeat_gap():
+    """A stale stream falls back to polling without needlessly restarting ETW."""
+    import threading
+    import time
+
+    from time_tracker.platform.windows.event_source import ProcessEventSource
+
+    now = [0.0]
+    clients = []
+    resume = threading.Event()
+    stop = threading.Event()
+
+    class LateHeartbeatClient:
+        def __init__(self, *_args, **_kwargs):
+            self.handle = object()
+            self.calls = 0
+            clients.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.handle = None
+
+        def receive(self, *_args):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "schema_version": 1,
+                    "stream_id": "late-heartbeat",
+                    "type": "ready",
+                    "message_sequence": 1,
+                    "started_at_ns": 1,
+                }
+            if self.calls == 2:
+                return {
+                    "schema_version": 1,
+                    "stream_id": "late-heartbeat",
+                    "type": "batch",
+                    "message_sequence": 2,
+                    "healthy": True,
+                    "data_complete": True,
+                    "records": [],
+                }
+            if self.calls <= 12:
+                now[0] += 0.5
+                raise TimeoutError()
+            if self.calls == 13:
+                assert resume.wait(1)
+                return {
+                    "schema_version": 1,
+                    "stream_id": "late-heartbeat",
+                    "type": "batch",
+                    "message_sequence": 3,
+                    "healthy": True,
+                    "data_complete": True,
+                    "records": [],
+                }
+            assert stop.wait(1)
+            raise BrokenPipeError()
+
+    source = ProcessEventSource(
+        "late-heartbeat", client_factory=LateHeartbeatClient, monotonic=lambda: now[0]
+    )
+    source.start()
+    try:
+        assert source.connected.wait(2)
+        deadline = time.monotonic() + 2
+        while clients[0].calls < 13 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert clients[0].calls >= 13
+        assert not source.status()["healthy"]
+        assert len(clients) == 1
+        resume.set()
+        while not source.status()["healthy"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert source.status()["healthy"]
+        assert len(clients) == 1
+    finally:
+        stop.set()
+        source.close()
+
+
 def test_process_boundary_rolls_back_both_history_and_ram(database):
     from tests.test_session_manager import InstrumentedStore
 

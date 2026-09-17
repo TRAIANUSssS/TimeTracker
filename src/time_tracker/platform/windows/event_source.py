@@ -131,13 +131,19 @@ class ProcessEventSource:
                         try:
                             message = client.receive(500)
                         except TimeoutError:
-                            if client.handle is None or (
+                            if client.handle is None:
+                                raise
+                            if stream.stream_id is not None:
+                                # A quiet/late helper must make the controller fall back to
+                                # polling, but an empty read is not a broken pipe.  Closing
+                                # here made every liveness timeout terminate the managed
+                                # collector, which in turn created a needless new ETW session.
+                                # status()/poll() derive health from last_packet, so the
+                                # fallback remains immediate without discarding the stream.
+                                continue
+                            if (
                                 not self._finishing.is_set()
-                                and (
-                                    self._monotonic() >= ready_deadline
-                                    if stream.stream_id is None
-                                    else self._monotonic() - last_packet >= HEALTH_TIMEOUT_SECONDS
-                                )
+                                and self._monotonic() >= ready_deadline
                             ):
                                 raise
                             continue
