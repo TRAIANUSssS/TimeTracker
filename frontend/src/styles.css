@@ -9,6 +9,8 @@
   --muted: #9295a2;
   font-weight: 500;
   font-size: 14px;
+  scrollbar-color: #df88ab #ffffff70;
+  scrollbar-width: thin;
 }
 * {
   box-sizing: border-box;
@@ -16,6 +18,21 @@
 body {
   margin: 0;
   min-width: 1120px;
+}
+::-webkit-scrollbar {
+  width: 11px;
+}
+::-webkit-scrollbar-track {
+  background: #ffffff52;
+}
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(#efa0bd, #db7da4);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: #d56894;
 }
 button,
 input,
@@ -689,6 +706,15 @@ h1 {
   overflow: hidden;
   box-shadow: 0 0 0 1px #ffffffbf;
 }
+.timeline-band.has-no-data:after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border: 1px dashed #d8d3db;
+  border-radius: inherit;
+  pointer-events: none;
+}
 .timeline-segment {
   position: absolute;
   height: 100%;
@@ -698,7 +724,6 @@ h1 {
 }
 .timeline-segment.no_data {
   background: transparent;
-  border: 1px dashed #d8d3db;
 }
 .timeline-segment.unselected {
   background: repeating-linear-gradient(

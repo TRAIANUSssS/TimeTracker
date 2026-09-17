@@ -1,17 +1,12 @@
 import type { Filters } from "./types";
-export const palette = [
-  "#AFCBFF",
-  "#F6A6C1",
-  "#A9DFE8",
-  "#B9C9F4",
-  "#A8E0C2",
-  "#F6D999",
-  "#B7DCC4",
-  "#C3B2EE",
-  "#AAB9CE",
-  "#D9C7DD",
-];
-export const appColor = (id: number) => palette[id % palette.length];
+// Golden-angle spacing assigns every newly seen application a durable, distinct hue.
+// Unlike a short palette, it does not start repeating when the app catalogue grows.
+export const appColor = (id: number) =>
+  `hsl(${(id * 137.508 + 338) % 360} 62% 72%)`;
+
+export function applicationName(name: string | undefined) {
+  return name?.trim().toLowerCase() === "lockapp.exe" ? "Блокировка" : name;
+}
 export const dayNames = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 export const longDayNames = [
   "Понедельник",

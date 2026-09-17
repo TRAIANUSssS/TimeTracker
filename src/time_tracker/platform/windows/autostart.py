@@ -8,7 +8,7 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 VALUE_NAME = "TimeTracker"
 
 
-def startup_command(database_path: Path, port: int) -> str:
+def startup_command(database_path: Path, port: int, *, autostart=True) -> str:
     if getattr(sys, "frozen", False):
         args = [sys.executable]
     else:
@@ -16,7 +16,10 @@ def startup_command(database_path: Path, port: int) -> str:
         if not pythonw.is_file():
             raise OSError("pythonw.exe is required for console-free startup")
         args = [str(pythonw), "-m", "time_tracker"]
-    args += ["--track", "--database", str(database_path.resolve()), "--api-port", str(port)]
+    args += ["--track"]
+    if autostart:
+        args.append("--autostart")
+    args += ["--database", str(database_path.resolve()), "--api-port", str(port)]
     command = subprocess.list2cmdline(args)
     if len(command) > 260:
         raise ValueError(
@@ -37,7 +40,10 @@ class Autostart:
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.key) as key:
                 value, _ = winreg.QueryValueEx(key, VALUE_NAME)
-            return value == startup_command(self.database_path, self.port)
+            return value in (
+                startup_command(self.database_path, self.port),
+                startup_command(self.database_path, self.port, autostart=False),
+            )
         except FileNotFoundError:
             return False
 

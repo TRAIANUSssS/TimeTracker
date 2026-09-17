@@ -25,12 +25,22 @@ SETTINGS_COMMAND = 1005
 
 
 class TrayApplication:
-    def __init__(self, controller, api, *, show_icon=True, service=None, autostart=None):
+    def __init__(
+        self,
+        controller,
+        api,
+        *,
+        show_icon=True,
+        service=None,
+        autostart=None,
+        notify_on_start=False,
+    ):
         self.controller = controller
         self.api = api
         self.show_icon = show_icon
         self.service = service
         self.autostart = autostart
+        self.notify_on_start = notify_on_start
         self.hwnd = None
         self._class_name = f"TimeTracker.{uuid4().hex}"
         self._taskbar_created = win32gui.RegisterWindowMessage("TaskbarCreated")
@@ -103,6 +113,8 @@ class TrayApplication:
             self._started = True
             if self.show_icon:
                 self._add_icon()
+                if self.notify_on_start:
+                    self._show_notification("TimeTracker", "Отслеживание времени запущено.")
             if not self.api.user32.SetTimer(self.hwnd, 1, 250, None):
                 raise OSError("Cannot start the collection timer")
             self._last_timer = time.monotonic()
@@ -190,9 +202,35 @@ class TrayApplication:
         if self.service is not None:
             webbrowser.open(self.service.url, new=2)
 
+    def _show_notification(self, title, message):
+        if not self.show_icon or not self.hwnd:
+            return
+        try:
+            win32gui.Shell_NotifyIcon(
+                win32gui.NIM_MODIFY,
+                (
+                    self.hwnd,
+                    0,
+                    win32gui.NIF_INFO,
+                    WM_TRAY,
+                    self._icon,
+                    "TimeTracker — запись времени",
+                    message,
+                    10000,
+                    title,
+                    win32gui.NIIF_INFO,
+                ),
+            )
+        except win32gui.error:
+            logger.debug("Could not show tray notification", exc_info=True)
+
     def _toggle_autostart(self):
         try:
-            self.autostart.set_enabled(not self.autostart.enabled())
+            enabled = not self.autostart.enabled()
+            self.autostart.set_enabled(enabled)
+            self._show_notification(
+                "TimeTracker", "Автозапуск включён." if enabled else "Автозапуск выключен."
+            )
         except (OSError, ValueError):
             logger.warning("Cannot update autostart setting", exc_info=True)
             win32gui.MessageBox(

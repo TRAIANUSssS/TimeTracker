@@ -17,7 +17,7 @@ Dashboard по референсу, автозапуск из меню трея �
 Распакуйте всю папку **TimeTracker** в постоянное место и запустите
 **TimeTracker.exe**. Python, Node.js и интернет для работы не нужны.
 Левый щелчок по значку часов открывает dashboard; правый — меню.
-Dashboard также доступен на **http://127.0.0.1:8765/**.
+Dashboard также доступен на **http://127.0.0.1:6969/**.
 
 В меню трея **«Запускать вместе с Windows»** включает/выключает автозапуск
 для текущего пользователя. По умолчанию он выключен. **«Выход»** останавливает
@@ -143,14 +143,14 @@ Start-Process -FilePath .\.venv\Scripts\time-tracker-tray.exe -WindowStyle Hidde
 ## Статистика и API
 
 API запускается и завершается вместе с трекером. После `--track` откройте
-**http://127.0.0.1:8765/docs** — описание endpoints и форма для пробных запросов.
+**http://127.0.0.1:6969/docs** — описание endpoints и форма для пробных запросов.
 Это документация API; пользовательский dashboard находится на `/`.
 JSON-контракт доступен на `/openapi.json`.
 
 Пример чтения статистики за день:
 
 ```powershell
-Invoke-RestMethod 'http://127.0.0.1:8765/stats/apps?date_from=2026-09-08&date_to=2026-09-08&time_from=00:00&time_to=24:00&timezone=Europe%2FMoscow'
+Invoke-RestMethod 'http://127.0.0.1:6969/stats/apps?date_from=2026-09-08&date_to=2026-09-08&time_from=00:00&time_to=24:00&timezone=Europe%2FMoscow'
 ```
 
 Если порт занят, можно задать другой:

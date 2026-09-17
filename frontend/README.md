@@ -12,7 +12,7 @@ npm.cmd --prefix frontend run build
 .\.venv\Scripts\python.exe -m time_tracker --track
 ```
 
-Dashboard: http://127.0.0.1:8765/. Для разработки с HMR после запуска Python:
+Dashboard: http://127.0.0.1:6969/. Для разработки с HMR после запуска Python:
 
 ```powershell
 npm.cmd --prefix frontend run dev

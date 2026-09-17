@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { appColor, duration } from "./format";
+import { appColor, applicationName, duration } from "./format";
 import { Icon } from "./controls";
 import type { Apps, AppRow } from "./types";
 
@@ -11,7 +11,7 @@ function AppIcon({ app }: { app: AppRow }) {
       style={failed ? { background: appColor(app.application_id) } : {}}
     >
       {failed ? (
-        <span>{app.name[0]?.toUpperCase()}</span>
+        <span>{applicationName(app.name)?.[0]?.toUpperCase()}</span>
       ) : (
         <img src={app.icon_url} alt="" onError={() => setFailed(true)} />
       )}
@@ -143,8 +143,8 @@ export function AppsTable({
             >
               <span className="rank">{index + 1}</span>
               <AppIcon app={app} />
-              <span className="app-name" title={app.name}>
-                {app.name}
+              <span className="app-name" title={applicationName(app.name)}>
+                {applicationName(app.name)}
               </span>
               <div className="progress-cell">
                 <div className="progress-track">

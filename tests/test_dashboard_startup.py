@@ -66,7 +66,8 @@ def test_autostart_enable_disable_in_isolated_registry_key(tmp_path):
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
             command, kind = winreg.QueryValueEx(key, "TimeTracker")
         assert kind == winreg.REG_SZ
-        assert "pythonw.exe" in command and "--api-port 8766" in command
+        assert "pythonw.exe" in command and "--autostart" in command
+        assert "--api-port 8766" in command
         setting.set_enabled(False)
         setting.set_enabled(False)
         assert not setting.enabled()
@@ -82,7 +83,7 @@ def test_frozen_autostart_quotes_paths_and_retains_database(monkeypatch):
     monkeypatch.setattr(sys, "executable", r"C:\My Apps\TimeTracker\TimeTracker.exe")
     command = startup_command(Path(r"C:\My Data\tracker.db"), 8765)
     assert command.startswith('"C:\\My Apps\\TimeTracker\\TimeTracker.exe" --track')
-    assert "--database" in command and "--api-port 8765" in command
+    assert "--autostart" in command and "--database" in command and "--api-port 8765" in command
     monkeypatch.setattr(sys, "executable", "C:\\" + "a" * 270 + "\\TimeTracker.exe")
     with pytest.raises(ValueError, match="260"):
         startup_command(Path("tracker.db"), 8765)
@@ -105,11 +106,17 @@ def test_tray_dashboard_and_autostart_are_reversible(monkeypatch):
     tray = TrayApplication(
         None, None, service=SimpleNamespace(url="http://127.0.0.1:8766"), autostart=setting
     )
+    notifications = []
+    tray._show_notification = lambda title, message: notifications.append((title, message))
     tray._open_dashboard()
     tray._toggle_autostart()
     tray._toggle_autostart()
     assert opened == ["http://127.0.0.1:8766"]
     assert values == [True, False]
+    assert notifications == [
+        ("TimeTracker", "Автозапуск включён."),
+        ("TimeTracker", "Автозапуск выключен."),
+    ]
     # No native run loop was started; release the optional owned icon.
     if tray._owns_icon:
         import win32gui

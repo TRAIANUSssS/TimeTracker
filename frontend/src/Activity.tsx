@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import {
   appColor,
+  applicationName,
   dateLabel,
   dayNames,
   duration,
@@ -77,12 +78,13 @@ export function Tip({
   );
 }
 function segmentTip(s: Segment, zone: string) {
+  const sameDay = localDay(s.started_at, zone) === localDay(s.ended_at, zone);
   return (
     <>
-      <strong>{s.name || names[s.type]}</strong>
+      <strong>{applicationName(s.name) || names[s.type]}</strong>
       <span>
-        {localStamp(s.started_at, zone, true, true)} —{" "}
-        {localStamp(s.ended_at, zone, true, true)}
+        {localStamp(s.started_at, zone, true)} —{" "}
+        {localStamp(s.ended_at, zone, !sameDay)}
       </span>
       <span>{duration(s.ended_at - s.started_at)}</span>
       {s.title && <p>{s.title}</p>}
@@ -135,12 +137,14 @@ export function Timeline({ data }: { data: Activity }) {
     if (!legend.has(key))
       legend.set(key, {
         color: s.application_id ? appColor(s.application_id) : colors[s.type],
-        name: s.name || names[s.type],
+        name: applicationName(s.name) || names[s.type],
       });
   });
   return (
     <div className="timeline" data-testid="timeline">
-      <div className="timeline-band">
+      <div
+        className={`timeline-band ${data.segments.some((s) => s.type === "no_data") ? "has-no-data" : ""}`}
+      >
         {data.segments.map((s, i) => (
           <Tip
             key={`${s.started_at}-${i}`}

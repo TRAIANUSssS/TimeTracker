@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class ApiServer:
-    def __init__(self, runtime, *, port=8765, collection_mode=None):
+    def __init__(self, runtime, *, port=6969, collection_mode=None):
         self.commands = SettingsMailbox(runtime)
         self.app = create_app(
             runtime.database,

@@ -5,24 +5,57 @@ import "./styles.css";
 import { DateRange, Icon, TimeRange } from "./controls";
 import { AppsTable, Empty, ErrorState, TableSkeleton } from "./Table";
 import { Heatmap, Timeline, Tip } from "./Activity";
-import { defaults, duration } from "./format";
+import { defaults, duration, isoDate, minuteValue } from "./format";
 import { useDashboard } from "./requests";
 import { Settings } from "./Settings";
 
 function App() {
   const [filters, setFilters] = useState(defaults),
     [expanded, setExpanded] = useState(false),
-    [refresh, setRefresh] = useState(0),
+    [refresh, setRefresh] = useState({ value: 0, background: false }),
     [path, setPath] = useState(location.pathname);
-  const data = useDashboard(filters, refresh),
+  const data = useDashboard(filters, refresh.value, refresh.background),
     defaultFilters = defaults();
-  const isDefault = JSON.stringify(filters) === JSON.stringify(defaultFilters);
-  const retry = () => setRefresh((n) => n + 1);
+  const isDefault = JSON.stringify(filters) === JSON.stringify(defaultFilters),
+    updateFilters = (next: typeof filters) => {
+      setFilters(next);
+      setRefresh((current) => ({ ...current, background: false }));
+    },
+    retry = () =>
+      setRefresh((current) => ({
+        value: current.value + 1,
+        background: false,
+      }));
   useEffect(() => {
     const pop = () => setPath(location.pathname);
     window.addEventListener("popstate", pop);
     return () => window.removeEventListener("popstate", pop);
   }, []);
+  useEffect(() => {
+    const now = new Date(),
+      today = isoDate(now),
+      minute = now.getHours() * 60 + now.getMinutes(),
+      includesNow =
+        filters.date_from <= today &&
+        today <= filters.date_to &&
+        (filters.date_from !== today ||
+          minuteValue(filters.time_from) <= minute) &&
+        (filters.date_to !== today || minuteValue(filters.time_to) >= minute);
+    if (path !== "/" || !includesNow) return;
+    const refreshSilently = () => {
+      if (!document.hidden)
+        setRefresh((current) => ({
+          value: current.value + 1,
+          background: true,
+        }));
+    };
+    const timer = window.setInterval(refreshSilently, 30000);
+    document.addEventListener("visibilitychange", refreshSilently);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshSilently);
+    };
+  }, [filters, path]);
   const navigate = (next: string) => {
     history.pushState({}, "", next);
     setPath(next);
@@ -85,7 +118,7 @@ function App() {
                 type="checkbox"
                 checked={filters.active_only}
                 onChange={(e) =>
-                  setFilters({ ...filters, active_only: e.target.checked })
+                  updateFilters({ ...filters, active_only: e.target.checked })
                 }
               />
               <span>Только активные</span>
@@ -93,19 +126,19 @@ function App() {
             <DateRange
               filters={filters}
               onChange={(date_from, date_to) =>
-                setFilters({ ...filters, date_from, date_to })
+                updateFilters({ ...filters, date_from, date_to })
               }
             />
             <TimeRange
               filters={filters}
               onChange={(time_from, time_to) =>
-                setFilters({ ...filters, time_from, time_to })
+                updateFilters({ ...filters, time_from, time_to })
               }
             />
             <button
               className="text-button reset"
               disabled={isDefault}
-              onClick={() => setFilters(defaults())}
+              onClick={() => updateFilters(defaults())}
             >
               Сбросить
             </button>

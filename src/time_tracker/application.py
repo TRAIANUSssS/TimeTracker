@@ -7,7 +7,7 @@ from logging.handlers import RotatingFileHandler
 from time_tracker.storage.database import Database
 
 
-def run_windows(database_path, *, api_port=8765, process_events=None):
+def run_windows(database_path, *, api_port=6969, process_events=None, started_from_autostart=False):
     if sys.platform != "win32":
         raise RuntimeError("Windows 10/11 is required for activity collection")
     from time_tracker.api.server import ApiServer
@@ -65,6 +65,7 @@ def run_windows(database_path, *, api_port=8765, process_events=None):
             api,
             service=ApiServer(runtime, port=api_port, collection_mode=collection_mode),
             autostart=Autostart(database.path, api_port),
+            notify_on_start=not started_from_autostart,
         ).run()
     except Exception:
         logger.exception("Application stopped with an error")

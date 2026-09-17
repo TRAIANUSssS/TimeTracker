@@ -26,7 +26,8 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--database", type=Path, metavar="PATH", help="database path (with --init-db or --track)"
     )
-    parser.add_argument("--api-port", type=int, help="local API port with --track (default: 8765)")
+    parser.add_argument("--api-port", type=int, help="local API port with --track (default: 6969)")
+    parser.add_argument("--autostart", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--perf", type=Path, metavar="JSONL", help="write new performance report")
     parser.add_argument("--perf-detail", action="store_true", help="include per-process timings")
     parser.add_argument(
@@ -47,6 +48,8 @@ def main(argv=None) -> int:
         parser.error("--database requires --init-db or --track")
     if args.api_port is not None and (not args.track or not 1 <= args.api_port <= 65535):
         parser.error("--api-port requires --track and a port in 1..65535")
+    if args.autostart and not args.track:
+        parser.error("--autostart requires --track")
     if args.track:
         from time_tracker.application import run_windows
         from time_tracker.diagnostics import performance
@@ -56,7 +59,8 @@ def main(argv=None) -> int:
                 performance.configure(args.perf, detailed=args.perf_detail)
             run_windows(
                 args.database if args.database is not None else default_database_path(),
-                api_port=args.api_port if args.api_port is not None else 8765,
+                api_port=args.api_port if args.api_port is not None else 6969,
+                started_from_autostart=args.autostart,
                 **(
                     {"process_events": args.process_events}
                     if args.process_events is not None
@@ -83,7 +87,7 @@ def main(argv=None) -> int:
     else:
         print("Storage and session core are ready. Use --init-db to initialize the database.")
         print("Use --track to start Windows collection and the dashboard in the tray.")
-        print("Dashboard: http://127.0.0.1:8765/ ; API documentation: /docs.")
+        print("Dashboard: http://127.0.0.1:6969/ ; API documentation: /docs.")
     return 0
 
 

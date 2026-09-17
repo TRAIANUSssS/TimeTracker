@@ -61,6 +61,12 @@ def test_cli_cannot_combine_tracking_and_initialization(tmp_path: Path) -> None:
     assert list(tmp_path.iterdir()) == []
 
 
+def test_cli_rejects_autostart_flag_without_tracking(tmp_path: Path) -> None:
+    result = run_cli(tmp_path, "--autostart")
+    assert result.returncode == 2
+    assert "--autostart requires --track" in result.stderr
+
+
 def test_cli_validates_api_port_without_starting_collection(tmp_path: Path) -> None:
     for args in (
         ("--api-port", "8765"),
