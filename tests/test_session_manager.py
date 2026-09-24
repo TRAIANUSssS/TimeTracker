@@ -174,6 +174,15 @@ def test_registry_metadata_and_path_normalization(
     assert len(rows(database, "executables")) == 1
 
 
+def test_new_system_process_is_excluded_from_statistics_by_default(core, database):
+    manager, _ = core
+    item = process(path=r"C:\Windows\System32\svchost.exe")
+    manager.handle(ProcessStarted(1100, item))
+    application = rows(database, "applications")[0]
+    assert application["category"] == "system"
+    assert application["ignored"] == 1
+
+
 def test_foreground_title_hwnd_and_unknown_transitions(core, database):
     manager, _ = core
     first = ForegroundObservation(process(), 42, "First")

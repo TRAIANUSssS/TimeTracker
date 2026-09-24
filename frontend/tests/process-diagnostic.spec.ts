@@ -14,6 +14,7 @@ test("missing application diagnostic traces a process into saved foreground hist
     application_id: 7,
     application_name: "Discord",
     ignored: false,
+    category: "user",
     is_foreground: true,
     foreground_saved_since_start: true,
   };

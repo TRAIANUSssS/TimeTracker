@@ -50,6 +50,7 @@ async function setup(page: Page) {
     color: null as string | null,
     track_titles: i % 3 !== 0,
     ignored: i === 6,
+    category: i === 6 ? "system" : i === 8 ? "unknown" : "user",
     active_ms: (10 - i) * 60_000,
   }));
   let fail = false;
@@ -151,6 +152,13 @@ test("applications activity sorting, enabled filter, row cues and lock fallback"
   await page.getByRole("checkbox", { name: "Только включённые" }).check();
   await expect(page.getByText("Показано: 9 из 10")).toBeVisible();
   await expect(page.getByText("notepad", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("checkbox", { name: "Только включённые" }).uncheck();
+  await page.getByLabel("Категория процессов").selectOption("system");
+  await expect(page.getByText("Показано: 1 из 10")).toBeVisible();
+  await expect(page.getByText("notepad", { exact: true })).toBeVisible();
+  await expect(page.getByText("Системный", { exact: true })).toBeVisible();
+  await page.getByLabel("Категория процессов").selectOption("all");
 
   const lockRow = rows.filter({ hasText: "Блокировка" });
   await expect(lockRow.locator(".settings-app-icon svg")).toBeVisible();

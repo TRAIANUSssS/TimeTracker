@@ -50,6 +50,16 @@ MIGRATIONS = (
             "DEFAULT 1 CHECK(onboarding_completed IN (0,1))",
         ),
     ),
+    Migration(
+        5,
+        "process_catalog",
+        (
+            "ALTER TABLE applications ADD COLUMN category TEXT NOT NULL DEFAULT 'unknown' "
+            "CHECK(category IN ('system','user','unknown'))",
+            "ALTER TABLE applications ADD COLUMN catalog_version INTEGER NOT NULL DEFAULT 0 "
+            "CHECK(catalog_version >= 0)",
+        ),
+    ),
 )
 SCHEMA_VERSION = MIGRATIONS[-1].version
 APPLICATION_ID = 0x5454524B  # "TTRK": distinguish tracker files from unrelated SQLite databases.

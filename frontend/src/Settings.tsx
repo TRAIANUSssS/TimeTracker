@@ -78,6 +78,7 @@ type Application = {
   color: string | null;
   track_titles: boolean;
   ignored: boolean;
+  category: "system" | "user" | "unknown";
   active_ms: number;
 };
 function ColorPicker({
@@ -171,7 +172,8 @@ function AppsPrivacy({ onChanged }: { onChanged: () => void }) {
   const [apps, setApps] = useState<Application[] | null>(null),
     [query, setQuery] = useState(""),
     [sort, setSort] = useState<"activity" | "name">("activity"),
-    [enabledOnly, setEnabledOnly] = useState(false);
+    [enabledOnly, setEnabledOnly] = useState(false),
+    [category, setCategory] = useState<"all" | Application["category"]>("all");
   const [error, setError] = useState(false),
     [saveErrors, setSaveErrors] = useState<Record<number, boolean>>({});
   const [pending, setPending] = useState<Set<number>>(new Set());
@@ -213,11 +215,17 @@ function AppsPrivacy({ onChanged }: { onChanged: () => void }) {
       const matches = (applicationName(app.name) || app.name)
         .toLocaleLowerCase()
         .includes(needle);
-      return matches && (!enabledOnly || !app.ignored);
+      return (
+        matches &&
+        (!enabledOnly || !app.ignored) &&
+        (category === "all" || app.category === category)
+      );
     })
     .sort((a, b) =>
       sort === "activity"
-        ? b.active_ms - a.active_ms || a.name.localeCompare(b.name, "ru") || a.id - b.id
+        ? b.active_ms - a.active_ms ||
+          a.name.localeCompare(b.name, "ru") ||
+          a.id - b.id
         : a.name.localeCompare(b.name, "ru") || a.id - b.id,
     );
   return (
@@ -243,7 +251,7 @@ function AppsPrivacy({ onChanged }: { onChanged: () => void }) {
               />
             </label>
             <span>
-              {query.trim() || enabledOnly
+              {query.trim() || enabledOnly || category !== "all"
                 ? `Показано: ${filtered!.length} из ${apps.length}`
                 : `Обнаружено приложений: ${apps.length}`}
             </span>
@@ -266,14 +274,31 @@ function AppsPrivacy({ onChanged }: { onChanged: () => void }) {
                 По названию
               </button>
             </div>
-            <label className="apps-enabled-filter">
-              <input
-                type="checkbox"
-                checked={enabledOnly}
-                onChange={(event) => setEnabledOnly(event.target.checked)}
-              />
-              <span>Только включённые</span>
-            </label>
+            <div className="apps-filters">
+              <label className="apps-category-filter">
+                <span>Категория:</span>
+                <select
+                  aria-label="Категория процессов"
+                  value={category}
+                  onChange={(event) =>
+                    setCategory(event.target.value as typeof category)
+                  }
+                >
+                  <option value="all">Все</option>
+                  <option value="user">Пользовательские</option>
+                  <option value="system">Системные</option>
+                  <option value="unknown">Неизвестные</option>
+                </select>
+              </label>
+              <label className="apps-enabled-filter">
+                <input
+                  type="checkbox"
+                  checked={enabledOnly}
+                  onChange={(event) => setEnabledOnly(event.target.checked)}
+                />
+                <span>Только включённые</span>
+              </label>
+            </div>
           </div>
           {!filtered?.length ? (
             <div className="settings-empty">
@@ -337,8 +362,18 @@ function AppsPrivacy({ onChanged }: { onChanged: () => void }) {
                               }}
                             />
                           </span>
-                          <span title={applicationName(app.name)}>
-                            {applicationName(app.name)}
+                          <span className="settings-app-label">
+                            <span title={applicationName(app.name)}>
+                              {applicationName(app.name)}
+                            </span>
+                            {app.category === "system" && (
+                              <span
+                                className="settings-app-category"
+                                title="Служебный процесс Windows. По умолчанию исключён из статистики."
+                              >
+                                Системный
+                              </span>
+                            )}
                           </span>
                         </div>
                         {saveErrors[app.id] && (
@@ -347,7 +382,9 @@ function AppsPrivacy({ onChanged }: { onChanged: () => void }) {
                           </span>
                         )}
                       </td>
-                      <td className="settings-app-activity">{duration(app.active_ms)}</td>
+                      <td className="settings-app-activity">
+                        {duration(app.active_ms)}
+                      </td>
                       <td>
                         <ColorPicker
                           app={app}

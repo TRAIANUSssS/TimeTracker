@@ -105,6 +105,7 @@ class Application(BaseModel):
     ignored: bool
     track_titles: bool
     color: str | None = None
+    category: Literal["system", "user", "unknown"]
     icon_url: str
     active_ms: int = 0
 

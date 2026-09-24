@@ -36,6 +36,11 @@ from time_tracker.domain.events import (
 from time_tracker.domain.identity import normalize_executable_path
 from time_tracker.domain.models import Executable, SystemState
 from time_tracker.domain.ports import TrackerRepositories, TrackerStore
+from time_tracker.domain.process_catalog import (
+    CATALOG_VERSION,
+    ProcessCategory,
+    classify_executable,
+)
 from time_tracker.domain.system_state import IDLE_THRESHOLD_MS, SystemFlags, idle_reached
 from time_tracker.domain.tracker_state import ForegroundRuntime, ProcessRuntime, TrackerState
 
@@ -291,7 +296,14 @@ class SessionManager:
             name = next(
                 (name.strip() for name in names if name and name.strip()), "Unknown application"
             )
-            application = repo.applications.create(name, at=at)
+            category = classify_executable(path)
+            application = repo.applications.create(
+                name,
+                at=at,
+                ignored=category is ProcessCategory.SYSTEM,
+                category=category,
+                catalog_version=CATALOG_VERSION,
+            )
             executable = repo.executables.create(application.id, path, at=at)
             state.applications[application.id] = application
             logger.info(

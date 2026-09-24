@@ -12,6 +12,7 @@ from time_tracker.storage.migrations import (
     migrate,
     validate_database,
 )
+from time_tracker.storage.process_catalog import refresh_process_catalog
 from time_tracker.storage.transactions import transaction
 
 
@@ -53,7 +54,10 @@ class Database:
             if mode.lower() != "wal":
                 raise MigrationError("This database location does not support WAL")
             connection.execute("PRAGMA synchronous = FULL")
-            return migrate(connection)
+            version = migrate(connection)
+            with transaction(connection):
+                refresh_process_catalog(connection)
+            return version
 
     @contextmanager
     def connection(self, *, read_only: bool = False) -> Iterator[sqlite3.Connection]:

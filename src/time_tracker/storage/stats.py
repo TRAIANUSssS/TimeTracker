@@ -14,6 +14,7 @@ def application_json(app, *, active_ms=0):
         "ignored": bool(app["ignored"]),
         "track_titles": bool(app["track_titles"]),
         "color": app["color"],
+        "category": app["category"],
         "icon_url": f"/applications/{app['id']}/icon",
         "active_ms": active_ms,
     }

@@ -21,6 +21,7 @@ from time_tracker.domain.models import (
     SystemStateSession,
     TrackerRun,
 )
+from time_tracker.domain.process_catalog import ProcessCategory
 from time_tracker.storage.transactions import transaction
 
 
@@ -69,9 +70,30 @@ class ApplicationRepository(_Records[Application]):
         values["track_titles"] = bool(values["track_titles"])
         return Application(**values)
 
-    def create(self, name: str, *, at: int) -> Application:
+    def create(
+        self,
+        name: str,
+        *,
+        at: int,
+        ignored: bool = False,
+        category: str = ProcessCategory.UNKNOWN,
+        catalog_version: int = 0,
+    ) -> Application:
+        try:
+            category = ProcessCategory(category)
+        except ValueError as error:
+            raise ValueError("Unknown process category") from error
+        if type(ignored) is not bool or type(catalog_version) is not int or catalog_version < 0:
+            raise ValueError("Invalid process catalog values")
         with transaction(self.connection):
-            return self._insert(name=name, created_at=at, updated_at=at)
+            return self._insert(
+                name=name,
+                ignored=ignored,
+                category=category,
+                catalog_version=catalog_version,
+                created_at=at,
+                updated_at=at,
+            )
 
     def list_all(self) -> list[Application]:
         return [

@@ -21,7 +21,15 @@ from time_tracker.domain.models import (
 class Applications(Protocol):
     def get(self, record_id: int) -> Application | None: ...
     def list_all(self) -> list[Application]: ...
-    def create(self, name: str, *, at: int) -> Application: ...
+    def create(
+        self,
+        name: str,
+        *,
+        at: int,
+        ignored: bool = False,
+        category: str = "unknown",
+        catalog_version: int = 0,
+    ) -> Application: ...
     def update_settings(
         self,
         application_id: int,

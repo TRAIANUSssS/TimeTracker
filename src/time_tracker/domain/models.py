@@ -20,6 +20,8 @@ class Application:
     created_at: int
     updated_at: int
     color: str | None = None
+    category: str = "unknown"
+    catalog_version: int = 0
 
 
 @dataclass(frozen=True, slots=True)
