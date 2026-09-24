@@ -1148,6 +1148,9 @@ body:has(.settings-layout),
 .settings-nav a[aria-current] svg {
   color: #eb689b;
 }
+.settings-nav a:last-child {
+  margin-top: 12px;
+}
 .settings-panel {
   padding: 32px;
   border-radius: 28px;
@@ -1472,6 +1475,61 @@ body:has(.settings-layout),
   line-height: 1.7;
   font-size: 14px;
 }
+.export-period {
+  padding-top: 10px;
+}
+.export-period .setting-row p {
+  margin: 5px 0 0;
+}
+.export-filter-controls {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin: 24px 0 30px;
+  position: relative;
+  z-index: 10;
+}
+.export-filter-controls .time-control {
+  min-width: 320px;
+}
+.export-period .personal-day-caption {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.export-title-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  cursor: pointer;
+}
+.export-title-option input {
+  width: 18px;
+  height: 18px;
+  margin: 3px 0 0;
+  accent-color: #e9578e;
+  flex: 0 0 auto;
+}
+.export-title-option span {
+  display: grid;
+  gap: 5px;
+}
+.export-title-option strong {
+  color: #494456;
+  font-size: 14px;
+}
+.export-title-option small {
+  color: #90899a;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.export-format p {
+  max-width: 680px;
+}
+.export-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+}
 .setting-row {
   display: flex;
   align-items: center;
@@ -1626,6 +1684,13 @@ body:has(.settings-layout),
   .settings-table th:nth-child(3) {
     width: 88px;
   }
+  .export-filter-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .export-filter-controls .time-control {
+    min-width: 0;
+  }
 }
 @media (max-width: 760px) {
   .settings-layout {
@@ -1644,6 +1709,9 @@ body:has(.settings-layout),
     padding: 10px;
     font-size: 12px;
     gap: 8px;
+  }
+  .settings-nav a:last-child {
+    margin-top: 0;
   }
   .settings-panel {
     padding: 20px;

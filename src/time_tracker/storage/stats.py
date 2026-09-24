@@ -120,7 +120,7 @@ class Statistics:
             "items": items,
         }
 
-    def timeline(self):
+    def timeline(self, *, include_titles=True):
         foreground = self._sessions("foreground_sessions")
         # A sweep handles the three-way intersection and gaps in linear time after sorting.
         points = {t for w in self.past for t in w}
@@ -161,7 +161,7 @@ class Statistics:
                                 "type": "application",
                                 "application_id": app["id"],
                                 "name": app["name"],
-                                "title": fg["window_title"],
+                                "title": fg["window_title"] if include_titles else None,
                                 "color": app["color"],
                             }
                         )

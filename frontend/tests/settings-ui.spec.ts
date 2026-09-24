@@ -172,6 +172,47 @@ test("applications activity sorting, enabled filter, row cues and lock fallback"
     .not.toBe(firstBackground);
 });
 
+test("data export downloads CSV, opts into titles and reports failures", async ({
+  page,
+}) => {
+  await setup(page);
+  let exportUrl = "";
+  let fail = false;
+  await page.route(/\/export\/(csv|json)\?/, (route) => {
+    exportUrl = route.request().url();
+    if (fail) return route.fulfill({ status: 503, json: {} });
+    const format = exportUrl.includes("/csv?") ? "csv" : "json";
+    return route.fulfill({
+      body: format === "csv" ? "started_at;ended_at\r\n" : '{"records":[]}',
+      contentType: format === "csv" ? "text/csv" : "application/json",
+      headers: {
+        "Content-Disposition": `attachment; filename="timetracker-test.${format}"`,
+      },
+    });
+  });
+  await page.goto("/settings/data");
+  await expect(page.getByRole("heading", { name: "Данные" })).toBeVisible();
+  await page.screenshot({
+    path: "test-results/settings-data.png",
+    fullPage: true,
+  });
+  await page.getByRole("checkbox", { name: "Включить заголовки окон" }).check();
+  const downloadEvent = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Экспорт CSV" }).click();
+  const download = await downloadEvent;
+  expect(download.suggestedFilename()).toBe("timetracker-test.csv");
+  const params = new URL(exportUrl).searchParams;
+  expect(params.get("include_titles")).toBe("true");
+  expect(params.get("timezone")).toBe("Europe/Moscow");
+  expect(params.get("personal_day_start")).toBe("00:00");
+
+  fail = true;
+  await page.getByRole("button", { name: "Экспорт JSON" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Не удалось подготовить экспорт",
+  );
+});
+
 test("display units, last selected unit, personal day and global pause", async ({
   page,
 }) => {

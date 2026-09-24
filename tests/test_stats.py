@@ -139,6 +139,20 @@ def test_timeline_gaps_unknown_ignored_system_states_and_future(database):
     assert segments[1]["title"] == "Title 1"
 
 
+def test_timeline_without_titles_merges_adjacent_title_changes(database):
+    with database.transaction() as c:
+        seed(c, states=[("ACTIVE", 0, 20)], foreground=[(1, 0, 10), (1, 10, 20)])
+        c.execute(
+            "UPDATE foreground_sessions SET window_title='Second' WHERE started_at=?",
+            (at(10),),
+        )
+    with database.reader() as c:
+        segments = Statistics(c, chosen("00:00", "00:20"), at(20)).timeline(include_titles=False)
+    assert len(segments) == 1
+    assert segments[0]["title"] is None
+    assert segments[0]["ended_at"] - segments[0]["started_at"] == 20 * MINUTE
+
+
 def test_open_sessions_use_one_now_and_filter_boundary(database):
     with database.transaction() as c:
         seed(c, states=[("ACTIVE", 0, None)], foreground=[(1, 0, None)], running=[(1, 0, None)])

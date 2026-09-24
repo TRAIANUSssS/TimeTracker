@@ -74,6 +74,10 @@ class ActivityFilters(Filters):
         return self
 
 
+class ExportFilters(Filters):
+    include_titles: bool = False
+
+
 class ApplicationPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     ignored: StrictBool | None = None

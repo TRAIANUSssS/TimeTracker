@@ -49,7 +49,9 @@ try {
     await page
         .getByRole("heading", { name: "Приложения и приватность", exact: true })
         .waitFor();
-    await page.getByRole("link", { name: "Сбор активности", exact: true }).click();
+    await page
+        .getByRole("link", { name: "Сбор активности", exact: true })
+        .click();
     await page.getByRole("radio", { name: /^Обычный/ }).waitFor();
     if (await page.getByRole("alert").count())
         throw new Error("Collection settings request failed");
@@ -57,6 +59,14 @@ try {
         path: "test-results/packaged-settings.png",
         fullPage: true,
     });
+    await page.getByRole("link", { name: "Данные", exact: true }).click();
+    await page.getByRole("heading", { name: "Данные", exact: true }).waitFor();
+    const download = await Promise.all([
+        page.waitForEvent("download"),
+        page.getByRole("button", { name: "Экспорт JSON", exact: true }).click(),
+    ]).then(([item]) => item);
+    if (!download.suggestedFilename().endsWith(".json"))
+        throw new Error("Export download filename is invalid");
     await page.getByRole("link", { name: "Основная", exact: true }).click();
     await page.getByTestId("timeline").waitFor();
     await page.waitForTimeout(350);

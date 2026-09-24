@@ -73,6 +73,12 @@ export function Icon({ name, size = 20 }: { name: string; size?: number }) {
         <path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3" />
       </>
     ),
+    download: (
+      <>
+        <path d="M12 3v12m-5-5 5 5 5-5" />
+        <path d="M5 20h14" />
+      </>
+    ),
   };
   return (
     <svg

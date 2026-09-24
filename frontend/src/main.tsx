@@ -299,6 +299,8 @@ function App() {
             navigate={navigate}
             preferences={preferences}
             onChanged={retry}
+            filters={filters}
+            onFiltersChange={updateFilters}
           />
         )}
       </main>

@@ -24,6 +24,7 @@ from time_tracker.api.schemas import (
     ContextSwitches,
     DateCell,
     DisplayPatch,
+    ExportFilters,
     Filters,
     OtherSegment,
     RecordingPatch,
@@ -31,6 +32,7 @@ from time_tracker.api.schemas import (
     TimelineFilters,
     WeekdayCell,
 )
+from time_tracker.history_export import csv_export, export_records, json_export
 from time_tracker.paths import web_directory
 from time_tracker.runtime import SystemClock
 from time_tracker.storage.stats import Statistics, application_active_totals, application_json
@@ -151,6 +153,44 @@ def create_app(database, *, commands=None, clock=None, collection_mode=None) -> 
     def activity(filters: Annotated[ActivityFilters, Query()]):
         return stats(filters, "activity")
 
+    @app.get("/export/{export_format}")
+    def export_history(
+        export_format: Literal["csv", "json"], filters: Annotated[ExportFilters, Query()]
+    ):
+        from time_tracker.settings import read_settings
+
+        now = clock.now_ms()
+        with database.reader() as connection:
+            display = read_settings(connection)["display"]
+            selection = filters.selection(display)
+            segments = Statistics(connection, selection, now).timeline(
+                include_titles=filters.include_titles
+            )
+        records = export_records(segments, selection.timezone)
+        filename = f"timetracker-{selection.date_from.isoformat()}"
+        if selection.date_to != selection.date_from:
+            filename += f"-{selection.date_to.isoformat()}"
+        if export_format == "csv":
+            content, media_type = csv_export(records), "text/csv; charset=utf-8"
+        else:
+            content, media_type = (
+                json_export(
+                    records,
+                    selection,
+                    include_titles=filters.include_titles,
+                    exported_at=now,
+                ),
+                "application/json; charset=utf-8",
+            )
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}.{export_format}"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
     @app.get("/applications", response_model=list[Application])
     def applications():
         now = clock.now_ms()
@@ -208,6 +248,7 @@ def create_app(database, *, commands=None, clock=None, collection_mode=None) -> 
     @app.get("/settings/display", include_in_schema=False)
     @app.get("/settings/apps", include_in_schema=False)
     @app.get("/settings/recording", include_in_schema=False)
+    @app.get("/settings/data", include_in_schema=False)
     @app.get("/settings", include_in_schema=False)
     def dashboard():
         if not (web / "index.html").is_file():

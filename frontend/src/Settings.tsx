@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { Icon } from "./controls";
+import { DateRange, Icon, TimeRange } from "./controls";
 import { Settings as CollectionSettings } from "./CollectionSettings";
 import {
   appColor,
   applicationName,
+  defaults,
   duration,
   isLockApplication,
 } from "./format";
 import { palette, request } from "./preferences";
 import type { PreferencesState, TimeUnits } from "./preferences";
+import type { Filters } from "./types";
 import { Tip } from "./Activity";
 
 const sections = [
@@ -16,6 +18,7 @@ const sections = [
   ["display", "Отображение", "monitor"],
   ["apps", "Приложения и приватность", "shield"],
   ["recording", "Запись и запуск", "play"],
+  ["data", "Данные", "download"],
 ];
 function Switch({
   checked,
@@ -573,16 +576,158 @@ function RecordingSettings({
     </>
   );
 }
+function DataSettings({
+  filters,
+  onFiltersChange,
+}: {
+  filters: Filters;
+  onFiltersChange: (filters: Filters) => void;
+}) {
+  const [includeTitles, setIncludeTitles] = useState(false),
+    [downloading, setDownloading] = useState<"csv" | "json" | null>(null),
+    [error, setError] = useState("");
+  const changeTime = (time_from: string, time_to: string) =>
+    onFiltersChange({
+      ...filters,
+      time_from,
+      time_to,
+      full_day: String(
+        time_from === (filters.personal_day_start || "00:00") &&
+          (time_to === time_from ||
+            (time_from === "00:00" && time_to === "24:00")),
+      ),
+    });
+  const download = async (format: "csv" | "json") => {
+    setDownloading(format);
+    setError("");
+    try {
+      const params = new URLSearchParams({
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        time_from: filters.time_from,
+        time_to: filters.time_to,
+        timezone: filters.timezone,
+        personal_day_start: filters.personal_day_start || "00:00",
+        full_day: filters.full_day || "false",
+        include_titles: String(includeTitles),
+      });
+      const response = await fetch(`/export/${format}?${params}`);
+      if (!response.ok) throw new Error(String(response.status));
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition") || "";
+      const filename =
+        /filename="?([^";]+)"?/.exec(disposition)?.[1] ||
+        `timetracker-export.${format}`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch {
+      setError("Не удалось подготовить экспорт. Попробуйте ещё раз.");
+    } finally {
+      setDownloading(null);
+    }
+  };
+  return (
+    <>
+      <h2>Данные</h2>
+      <p className="settings-subtitle">
+        Скачайте подробную историю активности за выбранный период.
+      </p>
+      <div className="settings-group export-period">
+        <div className="setting-row">
+          <div>
+            <h3>Период экспорта</h3>
+            <p>Этот же период будет выбран на основной странице.</p>
+          </div>
+          <button
+            className="text-button"
+            disabled={JSON.stringify(filters) === JSON.stringify(defaults())}
+            onClick={() => onFiltersChange(defaults())}
+          >
+            Сбросить
+          </button>
+        </div>
+        <div className="export-filter-controls">
+          <DateRange
+            filters={filters}
+            onChange={(date_from, date_to) =>
+              onFiltersChange({ ...filters, date_from, date_to })
+            }
+          />
+          <TimeRange filters={filters} onChange={changeTime} />
+        </div>
+        <p className="personal-day-caption">
+          День: {filters.personal_day_start || "00:00"}–
+          {filters.personal_day_start || "00:00"} следующего дня · часовой пояс:{" "}
+          {filters.timezone}
+        </p>
+      </div>
+      <div className="settings-group">
+        <label className="export-title-option">
+          <input
+            type="checkbox"
+            checked={includeTitles}
+            onChange={(event) => setIncludeTitles(event.target.checked)}
+          />
+          <span>
+            <strong>Включить заголовки окон</strong>
+            <small>
+              Заголовки могут содержать названия документов, сайтов и переписок.
+            </small>
+          </span>
+        </label>
+      </div>
+      <div className="settings-group export-format">
+        <h3>Формат файла</h3>
+        <p>
+          Одна строка — непрерывный интервал приложения или состояния системы.
+          CSV подходит для Excel, JSON сохраняет метаданные периода и версию
+          схемы.
+        </p>
+        <div className="export-actions">
+          <button
+            className="soft-button"
+            disabled={downloading !== null}
+            onClick={() => void download("csv")}
+          >
+            {downloading === "csv" ? "Подготовка…" : "Экспорт CSV"}
+          </button>
+          <button
+            className="soft-button"
+            disabled={downloading !== null}
+            onClick={() => void download("json")}
+          >
+            {downloading === "json" ? "Подготовка…" : "Экспорт JSON"}
+          </button>
+        </div>
+        {error && (
+          <p className="settings-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+    </>
+  );
+}
 export function Settings({
   path,
   navigate,
   preferences,
   onChanged,
+  filters,
+  onFiltersChange,
 }: {
   path: string;
   navigate: (path: string) => void;
   preferences: PreferencesState;
   onChanged: () => void;
+  filters: Filters;
+  onFiltersChange: (filters: Filters) => void;
 }) {
   const active = sections.some(([id]) => path === `/settings/${id}`)
     ? path.split("/")[2]
@@ -623,6 +768,8 @@ export function Settings({
           <Skeleton />
         ) : active === "display" ? (
           <DisplaySettings preferences={preferences} />
+        ) : active === "data" ? (
+          <DataSettings filters={filters} onFiltersChange={onFiltersChange} />
         ) : (
           <RecordingSettings preferences={preferences} onChanged={onChanged} />
         )}

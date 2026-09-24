@@ -84,6 +84,12 @@ def test_packaged_tracker_dashboard_collection_and_shutdown(tmp_path):
             }
             cells = client.get("/stats/activity", params=params).json()
             assert any(cell["status"] == "missing_hour" for cell in cells)
+            exported = client.get("/export/json", params=params)
+            assert exported.status_code == 200
+            assert exported.json()["schema_version"] == 1
+            csv_export = client.get("/export/csv", params=params)
+            assert csv_export.status_code == 200
+            assert csv_export.content.startswith(b"\xef\xbb\xbf")
             frontend = root / "frontend"
             browser = subprocess.run(
                 ["node", "tests/packaged-browser.mjs", f"http://127.0.0.1:{port}"],

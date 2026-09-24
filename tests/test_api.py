@@ -109,6 +109,44 @@ def test_http_stats_contracts_and_open_session_now(api):
     assert client.get("/openapi.json").status_code == 200
 
 
+def test_history_export_contract_and_title_opt_in(api):
+    client, runtime, mailbox, clock, provider = api
+    clock.at += 15 * 60000
+    response = client.get("/export/json", params=PARAMS)
+    assert response.status_code == 200, response.text
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="timetracker-2026-09-08.json"'
+    )
+    payload = response.json()
+    assert payload["schema_version"] == 1
+    assert payload["timezone"] == "UTC"
+    assert payload["include_titles"] is False
+    assert payload["period"] == {
+        "date_from": "2026-09-08",
+        "date_to": "2026-09-08",
+        "time_from": "00:00",
+        "time_to": "00:00",
+        "full_day": True,
+    }
+    assert payload["records"][0]["type"] == "no_data"
+    assert payload["records"][-1] == {
+        "started_at": "2026-09-08T08:00:00.000+00:00",
+        "ended_at": "2026-09-08T08:15:00.000+00:00",
+        "duration_ms": 900000,
+        "type": "application",
+        "application_id": 1,
+        "application_name": "editor",
+        "window_title": None,
+        "timezone": "UTC",
+    }
+    titled = client.get("/export/json", params=PARAMS | {"include_titles": "true"}).json()
+    assert titled["include_titles"] is True
+    assert titled["records"][-1]["window_title"] == "Original title"
+    csv_response = client.get("/export/csv", params=PARAMS)
+    assert csv_response.content.startswith(b"\xef\xbb\xbf")
+    assert "started_at;ended_at;duration_ms;type" in csv_response.content.decode("utf-8-sig")
+
+
 @pytest.mark.parametrize(
     "changes",
     [

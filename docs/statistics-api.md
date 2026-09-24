@@ -22,6 +22,8 @@ OpenAPI доступен на `/openapi.json`, интерактивная док
 | `GET /stats/context-switches` | `context_switches` |
 | `GET /stats/timeline` | Массив application/system/other/unknown/no_data сегментов; одна дата |
 | `GET /stats/activity` | Массив часовых ячеек; минимум две даты |
+| `GET /export/csv` | Подробные интервалы выбранного периода в CSV для Excel |
+| `GET /export/json` | Подробные интервалы и метаданные выбранного периода в JSON |
 | `GET /applications` | Все приложения, включая ignored, и текущие параметры |
 | `PATCH /applications/{id}` | Обновлённое приложение после применения команды |
 | `GET /applications/{id}/icon` | Существующий PNG из кеша или `404` |
@@ -31,6 +33,23 @@ OpenAPI доступен на `/openapi.json`, интерактивная док
 сортировка по убыванию активности. При `false` фильтр и сортировка используют
 `running_ms`. При равенстве длительностей порядок задаёт `application_id`.
 Этот флаг не меняет system, context switches или визуализации.
+
+## Экспорт истории
+
+Оба endpoint экспорта принимают те же параметры периода, timezone и личного дня,
+что статистика, а также `include_titles` (по умолчанию `false`). Одна запись —
+непрерывный интервал приложения либо состояние `idle`, `locked`, `sleep`,
+`unknown_activity`, `other_activity` или `no_data`. Ignored-приложение экспортируется
+как `other_activity` без имени, ID и title.
+
+CSV кодируется в UTF-8 с BOM, использует `;` и содержит столбцы `started_at`,
+`ended_at`, `duration_ms`, `type`, `application_id`, `application_name`,
+`window_title`, `timezone`. Текстовые значения, которые Excel мог бы принять за
+формулу, экранируются апострофом. JSON сохраняет исходный текст и содержит
+`schema_version: 1`, время создания, timezone, начало личного дня, параметры периода,
+признак включения titles и массив `records`. Временные метки записываются в ISO 8601
+с фактическим UTC offset, поэтому повторившийся час при переходе DST остаётся однозначным.
+Имя файла содержит выбранные даты; ответ передаётся как attachment.
 
 ## Временные окна и расчёты
 
