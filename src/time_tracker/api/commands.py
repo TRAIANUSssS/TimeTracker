@@ -73,6 +73,12 @@ class SettingsMailbox:
         if target == "onboarding":
             with self.runtime.database.transaction() as connection:
                 return save_onboarding(connection, changes["completed"])
+        if target == "process_diagnostic":
+            if self.controller is None:
+                raise WriterUnavailable("Process diagnostics are unavailable")
+            from time_tracker.process_diagnostics import diagnose_process
+
+            return diagnose_process(self.controller, **changes)
         if target == "recording":
             if "autostart" in changes:
                 if self.autostart is None:

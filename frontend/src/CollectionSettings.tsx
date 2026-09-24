@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ProcessDiagnostic } from "./ProcessDiagnostic";
 
 type Status = {
   mode: "polling" | "etw";
@@ -16,7 +17,7 @@ type Status = {
   update_available?: boolean;
 };
 
-export function Settings() {
+export function Settings({ navigate }: { navigate: (path: string) => void }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -285,6 +286,7 @@ export function Settings() {
           </div>
         </dialog>
       )}
+      <ProcessDiagnostic navigate={navigate} />
     </section>
   );
 }

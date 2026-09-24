@@ -1,9 +1,11 @@
 from datetime import date, datetime
+from types import SimpleNamespace
 
 import pytest
 from tests.test_api import BASE, PARAMS, Clock, Provider, request_with_writer
 from tests.test_api import api as api_fixture
 
+from time_tracker.domain.events import ForegroundObservation
 from time_tracker.domain.intervals import duration
 from time_tracker.domain.time_windows import TimeSelection, timestamp
 from time_tracker.runtime import TrackerRuntime
@@ -29,6 +31,46 @@ def test_onboarding_completion_is_explicit_and_persisted(api):
     assert client.get("/settings/preferences").json()["onboarding_completed"] is True
     with runtime.database.reader() as connection:
         assert read_settings(connection)["onboarding_completed"] is True
+
+
+def test_process_diagnostic_compares_windows_runtime_and_history(api):
+    client, runtime, mailbox, clock, provider = api
+    clock.at += 1000
+    provider.processes = SimpleNamespace(snapshot=lambda: (provider.process,))
+    provider.foreground = lambda: ForegroundObservation(provider.process, 1, "Diagnostic window")
+    mailbox.controller = SimpleNamespace(
+        provider=provider,
+        runtime=runtime,
+        clock=clock,
+        process_events=None,
+        _event_healthy=False,
+    )
+    response = request_with_writer(
+        mailbox,
+        lambda: client.post("/diagnostics/process", json={"query": "editor", "since": BASE}),
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["collection"] == {"source": "polling", "healthy": True}
+    assert payload["system_state"] == "ACTIVE"
+    assert payload["foreground_pid"] == 42
+    assert payload["matches"] == [
+        payload["matches"][0]
+        | {
+            "pid": 42,
+            "tracker_known": True,
+            "session_saved": True,
+            "application_id": 1,
+            "application_name": "editor",
+            "ignored": False,
+            "is_foreground": True,
+            "foreground_saved_since_start": True,
+        }
+    ]
+    assert client.post("/diagnostics/process", json={}).status_code == 422
+    assert (
+        client.post("/diagnostics/process", json={"query": "editor", "pid": 42}).status_code == 422
+    )
 
 
 def test_pause_closes_intervals_and_keeps_gap_after_fresh_resume(api):

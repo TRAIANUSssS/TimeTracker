@@ -28,6 +28,7 @@ from time_tracker.api.schemas import (
     Filters,
     OnboardingPatch,
     OtherSegment,
+    ProcessDiagnosticRequest,
     RecordingPatch,
     SystemStats,
     TimelineFilters,
@@ -124,6 +125,10 @@ def create_app(database, *, commands=None, clock=None, collection_mode=None) -> 
     @app.patch("/settings/onboarding")
     def onboarding_settings(settings: OnboardingPatch):
         return change_preference("onboarding", settings)
+
+    @app.post("/diagnostics/process")
+    def process_diagnostic(settings: ProcessDiagnosticRequest):
+        return change_preference("process_diagnostic", settings)
 
     def stats(filters, operation, *, response=None, **kwargs):
         now = clock.now_ms()

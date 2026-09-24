@@ -8,6 +8,7 @@ export default defineConfig({
       [
         "/stats",
         "/applications",
+        "/diagnostics/process",
         "/settings/preferences",
         "/settings/collection",
         "/settings/display",

@@ -761,7 +761,7 @@ export function Settings({
         {active === "apps" ? (
           <AppsPrivacy onChanged={onChanged} />
         ) : active === "activity" ? (
-          <CollectionSettings />
+          <CollectionSettings navigate={navigate} />
         ) : preferences.error ? (
           <LoadError retry={() => void preferences.reload()} />
         ) : !preferences.value ? (

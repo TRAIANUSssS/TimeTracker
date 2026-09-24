@@ -5,7 +5,7 @@ from datetime import date
 from typing import Literal
 from zoneinfo import ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, StrictBool, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from time_tracker.domain.time_windows import TimeSelection
 
@@ -237,3 +237,18 @@ class RecordingPatch(BaseModel):
 class OnboardingPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     completed: Literal[True]
+
+
+class ProcessDiagnosticRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str | None = Field(default=None, min_length=1, max_length=200)
+    pid: int | None = Field(default=None, ge=0)
+    since: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def one_target(self):
+        if (self.query is None) == (self.pid is None):
+            raise ValueError("Supply either a process search or a PID")
+        if self.query is not None and not self.query.strip():
+            raise ValueError("Process search cannot be blank")
+        return self

@@ -73,6 +73,14 @@ def test_packaged_tracker_dashboard_collection_and_shutdown(tmp_path):
             time.sleep(6)
             apps = client.get("/applications").json()
             assert apps
+            diagnostic = client.post(
+                "/diagnostics/process", json={"query": "TimeTracker.exe"}, timeout=20
+            )
+            assert diagnostic.status_code == 200
+            assert any(
+                item["process_name"].lower() == "timetracker.exe"
+                for item in diagnostic.json()["matches"]
+            )
             reply = client.patch(
                 f"/applications/{apps[0]['id']}", json={"track_titles": False}, timeout=15
             )
