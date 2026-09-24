@@ -232,3 +232,8 @@ class RecordingPatch(BaseModel):
         ):
             raise ValueError("Change one recording setting at a time")
         return self
+
+
+class OnboardingPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    completed: Literal[True]

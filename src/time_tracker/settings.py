@@ -29,6 +29,7 @@ def read_settings(connection):
     return {
         "display": deepcopy(DEFAULT_DISPLAY) | json.loads(row["display"]),
         "tracking_paused": bool(row["tracking_paused"]),
+        "onboarding_completed": bool(row["onboarding_completed"]),
     }
 
 
@@ -40,3 +41,10 @@ def save_display(connection, changes):
 
 def save_pause(connection, paused):
     connection.execute("UPDATE preferences SET tracking_paused=? WHERE id=1", (int(paused),))
+
+
+def save_onboarding(connection, completed):
+    connection.execute(
+        "UPDATE preferences SET onboarding_completed=? WHERE id=1", (int(completed),)
+    )
+    return {"completed": bool(completed)}

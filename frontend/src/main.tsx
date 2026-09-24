@@ -8,7 +8,18 @@ import { Heatmap, Timeline, Tip } from "./Activity";
 import { defaults, duration, personalToday, configureFormat } from "./format";
 import { useDashboard } from "./requests";
 import { Settings } from "./Settings";
+import { Onboarding } from "./Onboarding";
 import { defaultDisplay, usePreferences } from "./preferences";
+
+function Background() {
+  return (
+    <div className="background" aria-hidden="true">
+      <i />
+      <i />
+      <i />
+    </div>
+  );
+}
 
 function App() {
   const preferences = usePreferences();
@@ -86,13 +97,44 @@ function App() {
     history.pushState({}, "", next);
     setPath(next);
   };
+  useEffect(() => {
+    if (
+      preferences.value?.onboarding_completed === false &&
+      path !== "/onboarding"
+    ) {
+      history.replaceState({}, "", "/onboarding");
+      setPath("/onboarding");
+    }
+  }, [path, preferences.value?.onboarding_completed]);
+  const showOnboarding =
+    path === "/onboarding" || preferences.value?.onboarding_completed === false;
+  const completeOnboarding = () => {
+    history.replaceState({}, "", "/");
+    setPath("/");
+  };
+  if (showOnboarding && preferences.value)
+    return (
+      <>
+        <Background />
+        <Onboarding preferences={preferences} onComplete={completeOnboarding} />
+      </>
+    );
+  if (!preferences.value && !preferences.error)
+    return (
+      <>
+        <Background />
+        <main className="onboarding-page" aria-label="Загрузка">
+          <div
+            className="onboarding-loader"
+            role="status"
+            aria-label="Загрузка"
+          />
+        </main>
+      </>
+    );
   return (
     <>
-      <div className="background" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-      </div>
+      <Background />
       <main className="page-container">
         <header>
           <div className="header-top">

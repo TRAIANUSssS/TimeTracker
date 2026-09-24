@@ -42,6 +42,14 @@ MIGRATIONS = (
             "INSERT INTO preferences(id) VALUES(1)",
         ),
     ),
+    Migration(
+        4,
+        "onboarding",
+        (
+            "ALTER TABLE preferences ADD COLUMN onboarding_completed INTEGER NOT NULL "
+            "DEFAULT 1 CHECK(onboarding_completed IN (0,1))",
+        ),
+    ),
 )
 SCHEMA_VERSION = MIGRATIONS[-1].version
 APPLICATION_ID = 0x5454524B  # "TTRK": distinguish tracker files from unrelated SQLite databases.
@@ -77,10 +85,15 @@ def migrate(connection: sqlite3.Connection, migrations: tuple[Migration, ...] = 
     latest = len(migrations)
     with transaction(connection):
         current = validate_database(connection, latest)
+        initial_version = current
         for migration in migrations[current:]:
             # executescript() can implicitly commit: execute each statement explicitly instead.
             for statement in migration.statements:
                 connection.execute(statement)
             connection.execute(f"PRAGMA user_version = {migration.version}")
             connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+        # Existing installations must not be interrupted after an upgrade. Only a
+        # database created all the way to the onboarding schema in this call is new.
+        if initial_version == 0 and latest >= 4:
+            connection.execute("UPDATE preferences SET onboarding_completed=0 WHERE id=1")
     return latest

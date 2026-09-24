@@ -42,6 +42,7 @@ def test_initialization_is_idempotent_and_keeps_data(database: Database) -> None
             "preferences",
         }
         assert connection.execute("SELECT COUNT(*) FROM application_aliases").fetchone()[0] == 0
+        assert connection.execute("SELECT onboarding_completed FROM preferences").fetchone()[0] == 0
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
@@ -71,6 +72,7 @@ def test_settings_migration_preserves_existing_application_flags(tmp_path):
         app = Repositories(connection).applications.get(1)
         assert app.ignored and not app.track_titles and app.color is None
         assert connection.execute("SELECT tracking_paused FROM preferences").fetchone()[0] == 0
+        assert connection.execute("SELECT onboarding_completed FROM preferences").fetchone()[0] == 1
 
 
 def test_reader_snapshot_survives_concurrent_writer_commit(database: Database) -> None:

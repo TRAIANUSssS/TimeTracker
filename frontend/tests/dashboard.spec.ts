@@ -44,6 +44,7 @@ async function fixture(page) {
           timezone: "Europe/Moscow",
         },
         recording: { tracking_paused: false, autostart: false },
+        onboarding_completed: true,
       },
     }),
   );

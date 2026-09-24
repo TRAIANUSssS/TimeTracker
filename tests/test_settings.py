@@ -17,6 +17,20 @@ def change(api, path, values):
     return request_with_writer(mailbox, lambda: client.patch(path, json=values))
 
 
+def test_onboarding_completion_is_explicit_and_persisted(api):
+    client, runtime, _, _, _ = api
+    assert client.get("/settings/preferences").json()["onboarding_completed"] is False
+    assert client.patch("/settings/onboarding", json={"completed": False}).status_code == 422
+    assert (
+        client.patch("/settings/onboarding", json={"completed": True, "extra": True}).status_code
+        == 422
+    )
+    assert change(api, "/settings/onboarding", {"completed": True}).json() == {"completed": True}
+    assert client.get("/settings/preferences").json()["onboarding_completed"] is True
+    with runtime.database.reader() as connection:
+        assert read_settings(connection)["onboarding_completed"] is True
+
+
 def test_pause_closes_intervals_and_keeps_gap_after_fresh_resume(api):
     client, runtime, _, clock, provider = api
     clock.at += 60_000

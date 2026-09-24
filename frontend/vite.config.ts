@@ -12,6 +12,7 @@ export default defineConfig({
         "/settings/collection",
         "/settings/display",
         "/settings/recording",
+        "/settings/onboarding",
       ].map((path) => [
         path,
         {
@@ -20,9 +21,11 @@ export default defineConfig({
           bypass(request) {
             if (
               request.method === "GET" &&
-              ["/settings/display", "/settings/recording"].includes(
-                request.url || "",
-              )
+              [
+                "/settings/display",
+                "/settings/recording",
+                "/settings/onboarding",
+              ].includes(request.url || "")
             )
               return "/index.html";
           },

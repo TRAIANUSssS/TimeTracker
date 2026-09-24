@@ -23,6 +23,27 @@ try {
         return route.continue();
     });
     await page.goto(url);
+    await page.waitForFunction(
+        () =>
+            document
+                .querySelector("h1")
+                ?.textContent?.includes("TimeTracker") ||
+            document
+                .querySelector("h1")
+                ?.textContent?.includes("Похоже, вы здесь впервые"),
+    );
+    if (
+        await page
+            .getByRole("heading", { name: "Похоже, вы здесь впервые" })
+            .count()
+    ) {
+        await page.getByRole("button", { name: "Пропустить" }).click();
+        await page
+            .getByRole("heading", { name: "Выберите режим сбора активности" })
+            .waitFor();
+        await page.getByRole("radio", { name: /^Обычный/ }).check();
+        await page.getByRole("button", { name: "Готово" }).click();
+    }
     await page
         .getByRole("heading", { name: "TimeTracker", exact: true })
         .waitFor();

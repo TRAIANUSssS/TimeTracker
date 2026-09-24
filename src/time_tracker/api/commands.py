@@ -64,12 +64,15 @@ class SettingsMailbox:
                 future.set_exception(error)
 
     def _apply(self, target, changes, reserved_at):
-        from time_tracker.settings import save_display
+        from time_tracker.settings import save_display, save_onboarding
         from time_tracker.storage.repositories import ApplicationRepository
 
         if target == "display":
             with self.runtime.database.transaction() as connection:
                 return save_display(connection, changes)
+        if target == "onboarding":
+            with self.runtime.database.transaction() as connection:
+                return save_onboarding(connection, changes["completed"])
         if target == "recording":
             if "autostart" in changes:
                 if self.autostart is None:

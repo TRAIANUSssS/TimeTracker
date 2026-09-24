@@ -26,6 +26,7 @@ from time_tracker.api.schemas import (
     DisplayPatch,
     ExportFilters,
     Filters,
+    OnboardingPatch,
     OtherSegment,
     RecordingPatch,
     SystemStats,
@@ -97,6 +98,7 @@ def create_app(database, *, commands=None, clock=None, collection_mode=None) -> 
             autostart = None
         return {
             "display": result["display"],
+            "onboarding_completed": result["onboarding_completed"],
             "recording": {
                 "tracking_paused": result["tracking_paused"],
                 "autostart": autostart,
@@ -118,6 +120,10 @@ def create_app(database, *, commands=None, clock=None, collection_mode=None) -> 
     @app.patch("/settings/recording")
     def recording_settings(settings: RecordingPatch):
         return change_preference("recording", settings)
+
+    @app.patch("/settings/onboarding")
+    def onboarding_settings(settings: OnboardingPatch):
+        return change_preference("onboarding", settings)
 
     def stats(filters, operation, *, response=None, **kwargs):
         now = clock.now_ms()
@@ -244,6 +250,7 @@ def create_app(database, *, commands=None, clock=None, collection_mode=None) -> 
 
     @app.get("/", include_in_schema=False)
     @app.get("/advanced", include_in_schema=False)
+    @app.get("/onboarding", include_in_schema=False)
     @app.get("/settings/activity", include_in_schema=False)
     @app.get("/settings/display", include_in_schema=False)
     @app.get("/settings/apps", include_in_schema=False)

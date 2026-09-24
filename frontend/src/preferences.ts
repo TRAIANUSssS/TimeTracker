@@ -7,7 +7,11 @@ export type Display = {
   timezone: string | null;
 };
 export type Recording = { tracking_paused: boolean; autostart: boolean | null };
-export type Preferences = { display: Display; recording: Recording };
+export type Preferences = {
+  display: Display;
+  recording: Recording;
+  onboarding_completed: boolean;
+};
 export const defaultDisplay: Display = {
   time_units: { days: true, hours: true, minutes: true },
   personal_day_start: "00:00",
@@ -92,6 +96,28 @@ export function usePreferences() {
       setSaving(false);
     }
   };
-  return { value, error, saving, reload, save };
+  const completeOnboarding = async () => {
+    if (busy.current) return false;
+    revision.current++;
+    busy.current = true;
+    setSaving(true);
+    try {
+      const next = await request<{ completed: true }>("/settings/onboarding", {
+        completed: true,
+      });
+      setValue((previous) =>
+        previous
+          ? { ...previous, onboarding_completed: next.completed }
+          : previous,
+      );
+      setError(false);
+      return true;
+    } finally {
+      revision.current++;
+      busy.current = false;
+      setSaving(false);
+    }
+  };
+  return { value, error, saving, reload, save, completeOnboarding };
 }
 export type PreferencesState = ReturnType<typeof usePreferences>;

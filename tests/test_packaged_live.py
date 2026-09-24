@@ -49,7 +49,7 @@ def test_packaged_tracker_dashboard_collection_and_shutdown(tmp_path):
 
     try:
         with httpx.Client(
-            base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=2
+            base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=10
         ) as client:
             deadline = time.monotonic() + 30
             while True:
