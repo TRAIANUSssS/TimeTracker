@@ -5,15 +5,48 @@ import "./styles.css";
 import { DateRange, Icon, TimeRange } from "./controls";
 import { AppsTable, Empty, ErrorState, TableSkeleton } from "./Table";
 import { Heatmap, Timeline, Tip } from "./Activity";
-import { defaults, duration, isoDate, minuteValue } from "./format";
+import { defaults, duration, personalToday, configureFormat } from "./format";
 import { useDashboard } from "./requests";
 import { Settings } from "./Settings";
+import { defaultDisplay, usePreferences } from "./preferences";
 
 function App() {
+  const preferences = usePreferences();
+  configureFormat(preferences.value?.display || defaultDisplay);
   const [filters, setFilters] = useState(defaults),
     [expanded, setExpanded] = useState(false),
     [refresh, setRefresh] = useState({ value: 0, background: false }),
     [path, setPath] = useState(location.pathname);
+  const isSettings = path.startsWith("/settings");
+  useEffect(() => {
+    if (!preferences.value) return;
+    setFilters((previous) => {
+      const next = defaults();
+      if (
+        previous.personal_day_start === next.personal_day_start &&
+        previous.timezone === next.timezone
+      )
+        return previous;
+      const wasToday =
+        previous.date_from === previous.date_to &&
+        previous.date_from ===
+          personalToday(
+            new Date(),
+            previous.personal_day_start || "00:00",
+            previous.timezone,
+          );
+      return {
+        ...next,
+        active_only: previous.active_only,
+        ...(wasToday
+          ? {}
+          : { date_from: previous.date_from, date_to: previous.date_to }),
+      };
+    });
+  }, [
+    preferences.value?.display.personal_day_start,
+    preferences.value?.display.timezone,
+  ]);
   const data = useDashboard(filters, refresh.value, refresh.background),
     defaultFilters = defaults();
   const isDefault = JSON.stringify(filters) === JSON.stringify(defaultFilters),
@@ -32,15 +65,8 @@ function App() {
     return () => window.removeEventListener("popstate", pop);
   }, []);
   useEffect(() => {
-    const now = new Date(),
-      today = isoDate(now),
-      minute = now.getHours() * 60 + now.getMinutes(),
-      includesNow =
-        filters.date_from <= today &&
-        today <= filters.date_to &&
-        (filters.date_from !== today ||
-          minuteValue(filters.time_from) <= minute) &&
-        (filters.date_to !== today || minuteValue(filters.time_to) >= minute);
+    const today = personalToday(),
+      includesNow = filters.date_from <= today && today <= filters.date_to;
     if (path !== "/" || !includesNow) return;
     const refreshSilently = () => {
       if (!document.hidden)
@@ -71,14 +97,24 @@ function App() {
         <header>
           <div className="header-top">
             <h1>TimeTracker</h1>
-            <button
-              className={`settings-button ${path === "/settings" ? "selected" : ""}`}
-              aria-label="Настройки"
-              title="Настройки"
-              onClick={() => navigate(path === "/settings" ? "/" : "/settings")}
-            >
-              <Icon name="gear" />
-            </button>
+            <div className="header-actions">
+              {preferences.value?.recording.tracking_paused && (
+                <button
+                  className="paused-badge"
+                  onClick={() => navigate("/settings/recording")}
+                >
+                  Пауза
+                </button>
+              )}
+              <button
+                className={`settings-button ${isSettings ? "selected" : ""}`}
+                aria-label="Настройки"
+                title="Настройки"
+                onClick={() => navigate(isSettings ? "/" : "/settings")}
+              >
+                <Icon name="gear" />
+              </button>
+            </div>
           </div>
           <nav className="tabs" aria-label="Разделы">
             <a
@@ -105,7 +141,7 @@ function App() {
               style={{
                 transform:
                   path === "/advanced" ? "translateX(134px)" : "translateX(0)",
-                opacity: path === "/settings" ? 0 : 1,
+                opacity: isSettings ? 0 : 1,
                 width: path === "/advanced" ? 124 : 96,
               }}
             />
@@ -132,7 +168,16 @@ function App() {
             <TimeRange
               filters={filters}
               onChange={(time_from, time_to) =>
-                updateFilters({ ...filters, time_from, time_to })
+                updateFilters({
+                  ...filters,
+                  time_from,
+                  time_to,
+                  full_day: String(
+                    time_from === (filters.personal_day_start || "00:00") &&
+                      (time_to === time_from ||
+                        (time_from === "00:00" && time_to === "24:00")),
+                  ),
+                })
               }
             />
             <button
@@ -154,6 +199,10 @@ function App() {
               </span>
             </button>
           </section>
+          <p className="personal-day-caption">
+            День: {filters.personal_day_start || "00:00"}–
+            {filters.personal_day_start || "00:00"} следующего дня
+          </p>
           <section
             className={`total-time ${data.system.pending && data.system.delayed ? "updating" : ""}`}
             aria-label="Общее активное время"
@@ -244,7 +293,14 @@ function App() {
             />
           </div>
         )}
-        {path === "/settings" && <Settings />}
+        {isSettings && (
+          <Settings
+            path={path}
+            navigate={navigate}
+            preferences={preferences}
+            onChanged={retry}
+          />
+        )}
       </main>
     </>
   );

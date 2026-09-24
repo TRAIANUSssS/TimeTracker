@@ -152,9 +152,14 @@ class TrayApplication:
         menu = win32gui.CreatePopupMenu()
         try:
             win32gui.AppendMenu(menu, win32con.MF_STRING, DASHBOARD_COMMAND, "Открыть dashboard")
-            win32gui.AppendMenu(menu, win32con.MF_STRING, SETTINGS_COMMAND, "Настройки сбора")
+            win32gui.AppendMenu(menu, win32con.MF_STRING, SETTINGS_COMMAND, "Настройки")
             win32gui.AppendMenu(
-                menu, win32con.MF_STRING | win32con.MF_GRAYED, 1002, "Приостановить запись"
+                menu,
+                win32con.MF_STRING,
+                1002,
+                "Возобновить запись"
+                if self.controller.runtime.tracking_paused
+                else "Приостановить запись",
             )
             win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
             if self.autostart is not None:
@@ -191,6 +196,8 @@ class TrayApplication:
                 self._close()
             elif command == DASHBOARD_COMMAND:
                 self._open_dashboard()
+            elif command == 1002:
+                self._notify("toggle_pause")
             elif command == AUTOSTART_COMMAND:
                 self._toggle_autostart()
             elif command == SETTINGS_COMMAND and self.service is not None:

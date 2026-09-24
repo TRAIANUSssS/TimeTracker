@@ -141,10 +141,7 @@ class ProcessEventSource:
                                 # status()/poll() derive health from last_packet, so the
                                 # fallback remains immediate without discarding the stream.
                                 continue
-                            if (
-                                not self._finishing.is_set()
-                                and self._monotonic() >= ready_deadline
-                            ):
+                            if not self._finishing.is_set() and self._monotonic() >= ready_deadline:
                                 raise
                             continue
                         records = stream.accept(message)

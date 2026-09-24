@@ -5,6 +5,8 @@ export type Filters = {
   time_to: string;
   timezone: string;
   active_only: boolean;
+  personal_day_start?: string;
+  full_day?: string;
 };
 export type AppRow = {
   application_id: number;
@@ -12,6 +14,7 @@ export type AppRow = {
   active_ms: number;
   running_ms: number;
   icon_url: string;
+  color?: string | null;
 };
 export type Apps = {
   has_tracking_data: boolean;
@@ -31,6 +34,7 @@ export type Segment = {
   application_id?: number;
   name?: string;
   title?: string | null;
+  color?: string | null;
 };
 export type Cell = {
   date?: string;

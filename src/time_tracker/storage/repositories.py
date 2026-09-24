@@ -86,9 +86,10 @@ class ApplicationRepository(_Records[Application]):
         at: int,
         ignored: bool | None = None,
         track_titles: bool | None = None,
+        color: str | None = "",
     ) -> Application:
         """Persist flags; the future session manager must coordinate RAM/title transitions."""
-        if ignored is None and track_titles is None:
+        if ignored is None and track_titles is None and color == "":
             raise ValueError("At least one setting must be supplied")
         for value in (ignored, track_titles):
             if value is not None and type(value) is not bool:
@@ -97,9 +98,10 @@ class ApplicationRepository(_Records[Application]):
             row = self.connection.execute(
                 """UPDATE applications
                    SET ignored = COALESCE(?, ignored),
-                       track_titles = COALESCE(?, track_titles), updated_at = ?
+                       track_titles = COALESCE(?, track_titles),
+                       color = CASE WHEN ? THEN ? ELSE color END, updated_at = ?
                    WHERE id = ? AND updated_at <= ? RETURNING *""",
-                (ignored, track_titles, at, application_id, at),
+                (ignored, track_titles, color != "", color, at, application_id, at),
             ).fetchone()
             if row is None:
                 raise RecordNotFound("Application is missing or the settings timestamp is stale")

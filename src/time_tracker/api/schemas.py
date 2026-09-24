@@ -13,9 +13,11 @@ from time_tracker.domain.time_windows import TimeSelection
 class Filters(BaseModel):
     date_from: date
     date_to: date
-    time_from: str = "00:00"
-    time_to: str = "24:00"
-    timezone: str
+    time_from: str | None = None
+    time_to: str | None = None
+    timezone: str | None = None
+    personal_day_start: str | None = None
+    full_day: bool = False
 
     @field_validator("date_from", "date_to", mode="before")
     @classmethod
@@ -32,9 +34,23 @@ class Filters(BaseModel):
             raise ValueError(str(error)) from error
         return self
 
-    def selection(self):
+    def selection(self, display=None):
+        display = display or {}
+        start = (
+            self.personal_day_start
+            if self.personal_day_start is not None
+            else display.get("personal_day_start", "00:00")
+        )
+        zone = self.timezone if self.timezone is not None else display.get("timezone") or "UTC"
+        default_range = self.time_from is None and self.time_to is None
         return TimeSelection(
-            self.date_from, self.date_to, self.time_from, self.time_to, self.timezone
+            self.date_from,
+            self.date_to,
+            start if default_range else self.time_from if self.time_from is not None else "00:00",
+            start if default_range else self.time_to if self.time_to is not None else "24:00",
+            zone,
+            start,
+            self.full_day or default_range,
         )
 
 
@@ -62,13 +78,20 @@ class ApplicationPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     ignored: StrictBool | None = None
     track_titles: StrictBool | None = None
+    color: str | None = None
 
     @model_validator(mode="after")
     def nonempty_booleans(self):
         if not self.model_fields_set or any(
-            getattr(self, key) is None for key in self.model_fields_set
+            getattr(self, key) is None for key in self.model_fields_set if key != "color"
         ):
             raise ValueError("Supply at least one boolean setting; null is not allowed")
+        if self.color is not None:
+            from time_tracker.settings import PALETTE
+
+            self.color = self.color.upper()
+            if self.color not in PALETTE:
+                raise ValueError("Choose a palette color or null")
         return self
 
 
@@ -77,7 +100,9 @@ class Application(BaseModel):
     name: str
     ignored: bool
     track_titles: bool
+    color: str | None = None
     icon_url: str
+    active_ms: int = 0
 
 
 class AppStats(BaseModel):
@@ -85,6 +110,7 @@ class AppStats(BaseModel):
     name: str
     active_ms: int
     running_ms: int
+    color: str | None = None
     icon_url: str
 
 
@@ -115,6 +141,7 @@ class ApplicationSegment(Segment):
     application_id: int
     name: str
     title: str | None
+    color: str | None = None
 
 
 class OtherSegment(Segment):
@@ -148,3 +175,56 @@ class WeekdayCell(HourFields):
     missing_hour_days: int
     repeated_hour_days: int
     average_active_ms: float | None
+
+
+class TimeUnits(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    days: StrictBool
+    hours: StrictBool
+    minutes: StrictBool
+
+    @model_validator(mode="after")
+    def at_least_one(self):
+        if not any((self.days, self.hours, self.minutes)):
+            raise ValueError("Select at least one time unit")
+        return self
+
+
+class DisplayPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    time_units: TimeUnits | None = None
+    personal_day_start: str | None = None
+    timezone: str | None = None
+
+    @model_validator(mode="after")
+    def valid(self):
+        from zoneinfo import ZoneInfo
+
+        from time_tracker.domain.time_windows import minutes
+
+        if not self.model_fields_set or any(
+            getattr(self, k) is None for k in self.model_fields_set
+        ):
+            raise ValueError("Supply non-null display settings")
+        if self.personal_day_start is not None:
+            minutes(self.personal_day_start)
+        if self.timezone is not None:
+            try:
+                ZoneInfo(self.timezone)
+            except (ZoneInfoNotFoundError, ValueError) as error:
+                raise ValueError("Unknown timezone") from error
+        return self
+
+
+class RecordingPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tracking_paused: StrictBool | None = None
+    autostart: StrictBool | None = None
+
+    @model_validator(mode="after")
+    def valid(self):
+        if len(self.model_fields_set) != 1 or any(
+            getattr(self, k) is None for k in self.model_fields_set
+        ):
+            raise ValueError("Change one recording setting at a time")
+        return self

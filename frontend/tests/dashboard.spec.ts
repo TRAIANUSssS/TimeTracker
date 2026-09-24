@@ -35,6 +35,18 @@ const segments = [
 ];
 
 async function fixture(page) {
+  await page.route("**/settings/preferences", (route) =>
+    route.fulfill({
+      json: {
+        display: {
+          time_units: { days: true, hours: true, minutes: true },
+          personal_day_start: "00:00",
+          timezone: "Europe/Moscow",
+        },
+        recording: { tracking_paused: false, autostart: false },
+      },
+    }),
+  );
   await page.route("**/settings/collection", (route) =>
     route.fulfill({
       json: {
@@ -232,7 +244,7 @@ test("time slider commits on release, supports night range, rejects invalid text
   await page.getByLabel("Конец времени", { exact: true }).fill("03:00");
   await page.getByLabel("Конец времени", { exact: true }).press("Enter");
   await expect(
-    page.getByText("До следующего дня", { exact: true }),
+    page.getByText("Конец — на следующий день", { exact: true }),
   ).toBeVisible();
   const n = counts.apps;
   await page.getByLabel("Конец времени", { exact: true }).fill("25:00");
@@ -272,11 +284,17 @@ test("delayed skeleton, section failure retry, empty metadata and placeholder na
   ).toBeVisible();
   await page.getByRole("button", { name: "Настройки", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Режим сбора", exact: true }),
+    page.getByRole("heading", {
+      name: "Приложения и приватность",
+      exact: true,
+    }),
   ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "Режим сбора", exact: true }),
+    page.getByRole("heading", {
+      name: "Приложения и приватность",
+      exact: true,
+    }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Основная", exact: true }).click();
   await expect(page.getByLabel("Начало времени", { exact: true })).toHaveValue(

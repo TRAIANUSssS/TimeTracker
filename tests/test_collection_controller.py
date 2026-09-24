@@ -111,6 +111,47 @@ def test_failed_process_poll_keeps_existing_running(controller):
     assert len(collector.runtime.state.running_processes) == 1
 
 
+def test_user_pause_ignores_hooks_and_lifecycle_until_fresh_resume(controller, database):
+    collector, provider, clock = controller
+    clock.at = 2000
+    collector.set_paused(True)
+    clock.at = 10_000
+    calls = provider.process_calls
+    collector.notify("lock")
+    collector.notify("sleep")
+    collector.notify("wake")
+    collector.foreground_changed(1, False, clock.at)
+    collector.tick()
+    assert provider.process_calls == calls
+    assert collector.runtime.state is None
+    provider.snapshot_fail = True
+    with pytest.raises(OSError):
+        collector.set_paused(False)
+    assert collector.runtime.tracking_paused
+    provider.snapshot_fail = False
+    provider.locked = True
+    collector.set_paused(False)
+    assert collector.runtime.state.flags.is_locked
+    assert collector.runtime.state.run.started_at == 10_000
+    with database.reader() as connection:
+        rows = connection.execute(
+            "SELECT started_at,ended_at FROM system_state_sessions ORDER BY id"
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [(1000, 2000), (10_000, None)]
+
+
+def test_resume_accepts_snapshot_while_newer_native_event_is_queued(controller):
+    collector, provider, clock = controller
+    clock.at = 2000
+    collector.set_paused(True)
+    clock.at = 3000
+    collector.startup_snapshot_filter = lambda _: (_ for _ in ()).throw(
+        AssertionError("startup-only filter must not reject an explicit resume")
+    )
+    collector.set_paused(False)
+    assert collector.runtime.state.run.started_at == 3000
+
+
 def test_foreground_hook_resolves_only_its_window_and_splits_title(controller, database):
     collector, provider, clock = controller
     clock.at = 1100

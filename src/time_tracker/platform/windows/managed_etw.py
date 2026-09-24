@@ -4,7 +4,7 @@ import logging
 import subprocess
 import sys
 from contextlib import contextmanager
-from functools import wraps
+from functools import cached_property, wraps
 from pathlib import Path
 
 import pythoncom
@@ -110,6 +110,31 @@ class ManagedEtw:
 
     def available(self):
         return bundled_helper().is_file()
+
+    @cached_property
+    def _bundled_digest(self):
+        from time_tracker.platform.windows.etw_setup import package_digest
+
+        return package_digest(bundled_helper().parent) if self.available() else None
+
+    @com_apartment
+    def versions(self):
+        from time_tracker.platform.windows.etw_setup import verify_owned_task
+
+        bundled = self._bundled_digest
+        installed = None
+        with scheduler() as (_, folder):
+            task = find_task(folder, self.sid)
+            if task is not None:
+                verify_owned_task(task, self.sid, install_directory(self.sid))
+                installed = Path(task.Definition.Actions.Item(1).Path).parent.name.removeprefix(
+                    "version-"
+                )
+        return {
+            "installed_version": installed[:12] if installed else None,
+            "bundled_version": bundled[:12] if bundled else None,
+            "update_available": bool(installed and bundled and installed != bundled),
+        }
 
     @com_apartment
     def ensure_running(self):

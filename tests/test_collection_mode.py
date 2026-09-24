@@ -144,3 +144,15 @@ def test_missing_task_keeps_requested_mode_but_reports_actual_polling(tmp_path):
     assert restarted.status()["mode"] == "etw"
     assert restarted.status()["effective_mode"] == "polling"
     assert not restarted.status()["installed"]
+
+
+def test_version_lookup_failure_does_not_hide_installed_component(tmp_path):
+    backend = Backend(installed=True)
+
+    def fail():
+        raise OSError("Unreadable package")
+
+    backend.versions = fail
+    mode = CollectionMode(tmp_path / "tracker.db", backend)
+    assert mode.status()["installed"]
+    assert "версию" in mode.status()["error"]

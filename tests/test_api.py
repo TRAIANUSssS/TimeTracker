@@ -85,9 +85,12 @@ def test_http_stats_contracts_and_open_session_now(api):
                 "active_ms": 900000,
                 "running_ms": 900000,
                 "icon_url": "/applications/1/icon",
+                "color": None,
             }
         ],
     }
+    applications = client.get("/applications").json()
+    assert applications[0]["active_ms"] == 900000
     assert client.get("/stats/system", params=PARAMS).json() == {
         "active_ms": 900000,
         "idle_ms": 0,

@@ -31,6 +31,17 @@ MIGRATIONS = (
             "ON process_sessions(pid, process_started_at, detected_at)",
         ),
     ),
+    Migration(
+        3,
+        "settings",
+        (
+            "ALTER TABLE applications ADD COLUMN color TEXT",
+            "CREATE TABLE preferences (id INTEGER PRIMARY KEY CHECK(id=1), "
+            "display TEXT NOT NULL DEFAULT '{}', tracking_paused INTEGER NOT NULL DEFAULT 0 "
+            "CHECK(tracking_paused IN (0,1))) STRICT",
+            "INSERT INTO preferences(id) VALUES(1)",
+        ),
+    ),
 )
 SCHEMA_VERSION = MIGRATIONS[-1].version
 APPLICATION_ID = 0x5454524B  # "TTRK": distinguish tracker files from unrelated SQLite databases.

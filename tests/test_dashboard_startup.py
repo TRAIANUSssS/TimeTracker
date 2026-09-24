@@ -1,3 +1,4 @@
+import subprocess
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -68,9 +69,33 @@ def test_autostart_enable_disable_in_isolated_registry_key(tmp_path):
         assert kind == winreg.REG_SZ
         assert "pythonw.exe" in command and "--autostart" in command
         assert "--api-port 8766" in command
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, access=winreg.KEY_SET_VALUE) as key:
+            old = subprocess.list2cmdline(
+                [
+                    r"C:\Old\TimeTracker.exe",
+                    "--database",
+                    str((tmp_path / "тест.db").resolve()),
+                ]
+            )
+            winreg.SetValueEx(key, "TimeTracker", 0, winreg.REG_SZ, old)
+        assert not setting.enabled()
+        assert setting.refresh_if_configured()
+        assert setting.enabled()
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, access=winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(
+                key,
+                "TimeTracker",
+                0,
+                winreg.REG_SZ,
+                r"C:\Old\TimeTracker.exe --database C:\Other\tracker.db",
+            )
+        assert not setting.refresh_if_configured()
+        assert not setting.enabled()
+        setting.set_enabled(True)
         setting.set_enabled(False)
         setting.set_enabled(False)
         assert not setting.enabled()
+        assert not setting.refresh_if_configured()
     finally:
         try:
             winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)

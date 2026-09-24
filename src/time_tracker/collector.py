@@ -100,6 +100,25 @@ class CollectionController:
         if self.process_events is not None:
             self._next_process = self._next_fast = 0
 
+    def set_paused(self, paused):
+        if paused == self.runtime.tracking_paused:
+            return
+        snapshot = None
+        if not paused:
+            snapshot = self.provider.snapshot()
+            # Native notifications captured during this snapshot are newer facts and
+            # remain queued for the owner loop. Rejecting the resume here can make a
+            # busy desktop impossible to resume because foreground hooks keep arriving.
+        self.runtime.set_paused(paused, snapshot=snapshot)
+        self._event_pending.clear()
+        if self.process_events is not None:
+            self.process_events.poll()
+        self._pending_resume = None
+        self._power_open = self._paused = self._user_resumed = False
+        self._recorded_power.clear()
+        self._reset_deadlines()
+        self._next_process = self._next_fast = 0
+
     def _process_events(self, *, cutoff=None, deadline=None):
         if self.process_events is None:
             return
@@ -133,6 +152,9 @@ class CollectionController:
             boundary = record["generated_at_ns"] // 1_000_000
             # Creation is rounded to the domain's ms precision, like psutil snapshots.
             boundary = max(boundary, process.identity.creation_time)
+            if boundary < self.runtime.state.run.started_at:
+                self._event_pending.popleft()
+                continue
             at = (
                 cutoff
                 if cutoff is not None
@@ -193,6 +215,11 @@ class CollectionController:
         count("foreground_hooks.title" if title_changed else "foreground_hooks.foreground")
 
     def notify(self, kind, observed_at=None, *, defer_resume=False):
+        if kind == "toggle_pause":
+            self.set_paused(not self.runtime.tracking_paused)
+            return
+        if self.runtime.state is None:
+            return
         if observed_at is not None and observed_at < self.runtime.state.last_event_at:
             count("queue.late_notification")
         at = max(
@@ -305,6 +332,10 @@ class CollectionController:
     @measured("collector.tick")
     def tick(self):
         self.checkpoint()
+        if self.runtime.state is None:
+            if self.process_events is not None:
+                self.process_events.poll()  # Discard events observed during a user pause.
+            return
         self._process_events()
         if self.power_history is not None and self.monotonic() >= self._next_power:
             self._next_power = self.monotonic() + 2
@@ -357,6 +388,9 @@ class CollectionController:
             self._next_heartbeat = now + 5
 
     def stop(self):
+        if self.runtime.state is None:
+            self.runtime.stop()
+            return
         if self.power_history is not None:
             self._sync_power()
         if self.process_events is None:

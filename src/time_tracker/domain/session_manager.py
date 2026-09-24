@@ -94,18 +94,7 @@ class SessionManager:
                 latest.ended_at or latest.recovery_at, latest.recovery_at
             ):
                 raise ClockOrderError("Startup precedes the last confirmed history boundary")
-            previous = root.runs.get_open()
-            if previous is not None:
-                recovering = root.for_run(previous.id)
-                for sessions in (
-                    recovering.processes,
-                    recovering.running,
-                    recovering.foreground,
-                    recovering.system_states,
-                ):
-                    for session in sessions.list_open():
-                        sessions.end(session.id, at=previous.recovery_at)
-                recovering.runs.finish(previous.id, at=previous.recovery_at, reason="crash")
+            previous = self._recover(root)
             run = root.runs.start(at=at, version=self._version)
             repo = root.for_run(run.id)
             state = TrackerState(
@@ -124,6 +113,27 @@ class SessionManager:
         if previous is not None:
             logger.info("Recovered run %s at %s", previous.id, previous.recovery_at)
         logger.info("Started run %s in %s", state.run.id, state.flags.effective)
+
+    @staticmethod
+    def _recover(root):
+        previous = root.runs.get_open()
+        if previous is not None:
+            recovering = root.for_run(previous.id)
+            for sessions in (
+                recovering.processes,
+                recovering.running,
+                recovering.foreground,
+                recovering.system_states,
+            ):
+                for session in sessions.list_open():
+                    sessions.end(session.id, at=previous.recovery_at)
+            recovering.runs.finish(previous.id, at=previous.recovery_at, reason="crash")
+        return previous
+
+    def recover(self):
+        self._check_owner()
+        with self._store.transaction() as root:
+            self._recover(root)
 
     @measured("manager.handle")
     def handle(self, event: TrackerEvent) -> bool:
@@ -522,7 +532,7 @@ class SessionManager:
         repo: TrackerRepositories,
         event: ApplicationSettingsChanged,
     ) -> None:
-        if event.ignored is None and event.track_titles is None:
+        if event.ignored is None and event.track_titles is None and event.color == "":
             raise ValueError("At least one setting must be supplied")
         for value in (event.ignored, event.track_titles):
             if value is not None and type(value) is not bool:
@@ -532,10 +542,11 @@ class SessionManager:
             raise LookupError("Application does not exist")
         ignored = previous.ignored if event.ignored is None else event.ignored
         titles = previous.track_titles if event.track_titles is None else event.track_titles
-        if (ignored, titles) == (previous.ignored, previous.track_titles):
+        color = previous.color if event.color == "" else event.color
+        if (ignored, titles, color) == (previous.ignored, previous.track_titles, previous.color):
             return
         app = repo.applications.update_settings(
-            previous.id, at=event.observed_at, ignored=ignored, track_titles=titles
+            previous.id, at=event.observed_at, ignored=ignored, track_titles=titles, color=color
         )
         state.applications[app.id] = app
         foreground = state.foreground

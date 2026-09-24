@@ -194,4 +194,5 @@ class ApplicationSettingsChanged(TrackerEvent):
     application_id: int
     ignored: bool | None = None
     track_titles: bool | None = None
+    color: str | None = ""  # Empty string means unchanged; None restores auto.
     kind: ClassVar[EventType] = EventType.APPLICATION_SETTINGS_CHANGED

@@ -36,6 +36,8 @@ class TrackerRuntime:
         self.clock = clock if clock is not None else SystemClock()
         self._lock = InstanceLock(database.path)
         self._manager: SessionManager | None = None
+        self._store = SQLiteTrackerStore(database)
+        self.tracking_paused = False
 
     @property
     def state(self) -> TrackerState | None:
@@ -48,7 +50,15 @@ class TrackerRuntime:
         self._lock.acquire()
         try:
             self.database.initialize()
-            manager = SessionManager(SQLiteTrackerStore(self.database), version=__version__)
+            from time_tracker.settings import read_settings
+
+            manager = SessionManager(self._store, version=__version__)
+            with self.database.reader() as connection:
+                self.tracking_paused = read_settings(connection)["tracking_paused"]
+            if self.tracking_paused:
+                manager.recover()
+                self._manager = manager
+                return
             if snapshot is None:
                 snapshot = self.provider.snapshot()
             if snapshot_filter is not None:
@@ -67,6 +77,24 @@ class TrackerRuntime:
             raise RuntimeError("Runtime is not started")
         return self._manager.handle(event)
 
+    def set_paused(self, paused: bool, *, snapshot=None):
+        if self._manager is None:
+            raise RuntimeError("Runtime is not started")
+        if paused == self.tracking_paused:
+            return
+        self._store.pause_transition = paused
+        try:
+            if paused:
+                self._manager.handle(
+                    TrackerStopping(max(self.clock.now_ms(), self.state.last_event_at))
+                )
+            else:
+                snapshot = snapshot if snapshot is not None else self.provider.snapshot()
+                self._manager.handle(TrackerStarted(snapshot.observed_at, snapshot))
+            self.tracking_paused = paused
+        finally:
+            self._store.pause_transition = None
+
     def heartbeat(self) -> None:
         state = self.state
         if state is None:
@@ -78,7 +106,10 @@ class TrackerRuntime:
         if self._manager is None:
             return
         state = self.state
-        assert state is not None
+        if state is None:
+            self._manager = None
+            self._lock.release()
+            return
         try:
             self._manager.handle(
                 TrackerStopping(

@@ -39,6 +39,7 @@ def test_initialization_is_idempotent_and_keeps_data(database: Database) -> None
             "system_state_sessions",
             "tracker_runs",
             "application_aliases",
+            "preferences",
         }
         assert connection.execute("SELECT COUNT(*) FROM application_aliases").fetchone()[0] == 0
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
@@ -54,6 +55,22 @@ def test_connection_pragmas_and_read_only_guard(database: Database) -> None:
             if read_only:
                 with pytest.raises(sqlite3.OperationalError, match="readonly"):
                     connection.execute("DELETE FROM applications")
+
+
+def test_settings_migration_preserves_existing_application_flags(tmp_path):
+    path = tmp_path / "old.db"
+    with sqlite3.connect(path) as connection:
+        migrate(connection, MIGRATIONS[:2])
+        connection.execute(
+            "INSERT INTO applications(name,ignored,track_titles,created_at,updated_at) "
+            "VALUES ('Editor',1,0,100,100)"
+        )
+    database = Database(path)
+    database.initialize()
+    with database.reader() as connection:
+        app = Repositories(connection).applications.get(1)
+        assert app.ignored and not app.track_titles and app.color is None
+        assert connection.execute("SELECT tracking_paused FROM preferences").fetchone()[0] == 0
 
 
 def test_reader_snapshot_survives_concurrent_writer_commit(database: Database) -> None:

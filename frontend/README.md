@@ -18,13 +18,18 @@ Dashboard: http://127.0.0.1:6969/. Для разработки с HMR после
 npm.cmd --prefix frontend run dev
 ```
 
-Vite на `127.0.0.1:5173` проксирует `/stats` и `/applications` на локальный API.
+Vite на `127.0.0.1:6970` проксирует `/stats`, `/applications` и API настроек на локальный API.
 В production FastAPI раздаёт `dist`, прокси не используется.
 
 `src/controls.tsx` — календарь и точное время; `Table.tsx` — таблица и FLIP;
 `Activity.tsx` — timeline, heatmap, tooltips; `requests.ts` — отдельные поколения
 запросов apps/system/activity, отмена и задержка skeleton 150 ms. `styles.css`
 содержит desktop-оформление. Данные статистики не пересчитываются на frontend.
+
+`Settings.tsx` — четыре раздела настроек по [спецификации](../docs/time_tracker_settings_ui_spec.md),
+`CollectionSettings.tsx` — состояние и управление ETW, `preferences.ts` — загрузка
+и автосохранение общих предпочтений. `/settings` открывает приложения и приватность;
+подразделы доступны по прямым ссылкам и через историю браузера.
 
 Проверки:
 

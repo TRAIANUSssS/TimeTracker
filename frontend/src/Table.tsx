@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { appColor, applicationName, duration } from "./format";
+import { appColor, applicationName, duration, isLockApplication } from "./format";
 import { Icon } from "./controls";
 import type { Apps, AppRow } from "./types";
 
@@ -8,10 +8,16 @@ function AppIcon({ app }: { app: AppRow }) {
   return (
     <span
       className="app-icon"
-      style={failed ? { background: appColor(app.application_id) } : {}}
+      style={
+        failed ? { background: app.color || appColor(app.application_id) } : {}
+      }
     >
       {failed ? (
-        <span>{applicationName(app.name)?.[0]?.toUpperCase()}</span>
+        isLockApplication(app.name) ? (
+          <Icon name="lock" size={16} />
+        ) : (
+          <span>{applicationName(app.name)?.[0]?.toUpperCase()}</span>
+        )
       ) : (
         <img src={app.icon_url} alt="" onError={() => setFailed(true)} />
       )}

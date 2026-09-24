@@ -10,8 +10,13 @@ from time_tracker.storage.repositories import Repositories
 class SQLiteTrackerStore:
     def __init__(self, database: Database) -> None:
         self.database = database
+        self.pause_transition = None
 
     @contextmanager
     def transaction(self) -> Iterator[Repositories]:
         with self.database.transaction() as connection:
             yield Repositories(connection)
+            if self.pause_transition is not None:
+                from time_tracker.settings import save_pause
+
+                save_pause(connection, self.pause_transition)

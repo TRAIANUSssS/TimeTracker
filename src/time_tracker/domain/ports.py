@@ -29,6 +29,7 @@ class Applications(Protocol):
         at: int,
         ignored: bool | None = None,
         track_titles: bool | None = None,
+        color: str | None = "",
     ) -> Application: ...
 
 

@@ -23,15 +23,17 @@ from time_tracker.api.schemas import (
     AppsResponse,
     ContextSwitches,
     DateCell,
+    DisplayPatch,
     Filters,
     OtherSegment,
+    RecordingPatch,
     SystemStats,
     TimelineFilters,
     WeekdayCell,
 )
 from time_tracker.paths import web_directory
 from time_tracker.runtime import SystemClock
-from time_tracker.storage.stats import Statistics, application_json
+from time_tracker.storage.stats import Statistics, application_active_totals, application_json
 
 
 class CollectionAction(BaseModel):
@@ -81,10 +83,48 @@ def create_app(database, *, commands=None, clock=None, collection_mode=None) -> 
             raise HTTPException(503, "Не удалось сохранить или проверить настройки.") from error
         return collection_mode.status()
 
+    @app.get("/settings/preferences")
+    def preferences():
+        from time_tracker.settings import read_settings
+
+        with database.reader() as connection:
+            result = read_settings(connection)
+        try:
+            autostart = commands.autostart.enabled() if commands and commands.autostart else None
+        except (OSError, ValueError):
+            autostart = None
+        return {
+            "display": result["display"],
+            "recording": {
+                "tracking_paused": result["tracking_paused"],
+                "autostart": autostart,
+            },
+        }
+
+    def change_preference(target, changes):
+        if commands is None:
+            raise HTTPException(503, "Настройки недоступны.")
+        try:
+            return commands.change(target, changes.model_dump(exclude_unset=True))
+        except (WriterUnavailable, OSError, RuntimeError) as error:
+            raise HTTPException(503, "Не удалось сохранить настройку.") from error
+
+    @app.patch("/settings/display")
+    def display_settings(settings: DisplayPatch):
+        return change_preference("display", settings)
+
+    @app.patch("/settings/recording")
+    def recording_settings(settings: RecordingPatch):
+        return change_preference("recording", settings)
+
     def stats(filters, operation, *, response=None, **kwargs):
         now = clock.now_ms()
         with database.reader() as connection:
-            reader = Statistics(connection, filters.selection(), now)
+            from time_tracker.settings import read_settings
+
+            reader = Statistics(
+                connection, filters.selection(read_settings(connection)["display"]), now
+            )
             if response is not None:
                 # Keep the specified JSON array contract; expose the full axis even when
                 # there is no history or the selection is entirely in the future.
@@ -113,9 +153,11 @@ def create_app(database, *, commands=None, clock=None, collection_mode=None) -> 
 
     @app.get("/applications", response_model=list[Application])
     def applications():
+        now = clock.now_ms()
         with database.reader() as connection:
+            totals = application_active_totals(connection, now)
             return [
-                application_json(row)
+                application_json(row, active_ms=totals.get(row["id"], 0))
                 for row in connection.execute(
                     "SELECT * FROM applications ORDER BY name COLLATE NOCASE,id"
                 )
@@ -162,6 +204,10 @@ def create_app(database, *, commands=None, clock=None, collection_mode=None) -> 
 
     @app.get("/", include_in_schema=False)
     @app.get("/advanced", include_in_schema=False)
+    @app.get("/settings/activity", include_in_schema=False)
+    @app.get("/settings/display", include_in_schema=False)
+    @app.get("/settings/apps", include_in_schema=False)
+    @app.get("/settings/recording", include_in_schema=False)
     @app.get("/settings", include_in_schema=False)
     def dashboard():
         if not (web / "index.html").is_file():

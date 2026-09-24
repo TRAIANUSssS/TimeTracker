@@ -47,6 +47,7 @@ class CollectionMode:
         self._desired = mode
 
     def status(self):
+        versions = {}
         try:
             installed = self.backend.installed()
             setup_error = None
@@ -60,9 +61,15 @@ class CollectionMode:
                 if failure != self._check_error:
                     logger.warning("Cannot verify installed ETW component", exc_info=True)
                     self._check_error = failure
+        if hasattr(self.backend, "versions"):
+            try:
+                versions = self.backend.versions()
+            except Exception:
+                setup_error = "Не удалось проверить версию ETW-компонента."
         with self._lock:
             healthy = self.source is not None and self.source.status()["healthy"]
             return {
+                **versions,
                 "mode": self._desired,
                 "active_mode": self.active_mode,
                 "effective_mode": "etw" if healthy else "polling",
@@ -110,7 +117,12 @@ class CollectionMode:
         except Exception as error:
             logger.warning("ETW component setup failed", exc_info=True)
             with self._lock:
-                self._error = str(error)
+                self._error = (
+                    "Подтверждение Windows отменено. Режим не изменён."
+                    if isinstance(error, PermissionError)
+                    and ("отменено" in str(error) or "cancelled" in str(error))
+                    else "Не удалось настроить ETW-компонент. Подробности в журнале."
+                )
         finally:
             with self._lock:
                 self._busy = False

@@ -1,5 +1,50 @@
 import { expect, test } from "@playwright/test";
 
+test("ETW removal requires confirmation and Escape cancels", async ({
+  page,
+}) => {
+  let removals = 0;
+  const state = {
+    mode: "polling",
+    active_mode: "polling",
+    effective_mode: "polling",
+    installed: true,
+    can_install: true,
+    busy: false,
+    error: null,
+    restart_required: false,
+    external: false,
+    token: "test",
+  };
+  await page.route("**/stats/**", (route) =>
+    route.fulfill({ status: 503, json: {} }),
+  );
+  await page.route("**/settings/collection", async (route) => {
+    if (route.request().method() === "POST") {
+      removals++;
+      state.installed = false;
+    }
+    await route.fulfill({ json: state });
+  });
+  await page.goto("/settings/activity");
+  await page
+    .getByRole("button", { name: "Удалить компонент", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  expect(removals).toBe(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(removals).toBe(0);
+  await page
+    .getByRole("button", { name: "Удалить компонент", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Удалить", exact: true }).click();
+  await expect.poll(() => removals).toBe(1);
+  await expect(
+    page.getByRole("button", { name: "Удалить компонент", exact: true }),
+  ).toHaveCount(0);
+});
+
 test("collection setup, pending restart, fallback and removal guard", async ({
   page,
 }) => {
@@ -37,7 +82,7 @@ test("collection setup, pending restart, fallback and removal guard", async ({
     }
     await route.fulfill({ json: state });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/activity");
   await expect(
     page.getByRole("radio", { name: /^Экономичный/ }),
   ).toBeDisabled();
@@ -86,7 +131,7 @@ test("cancelled Windows confirmation is visible without selecting ETW", async ({
       state.error = "Подтверждение Windows отменено. Режим не изменён.";
     await route.fulfill({ json: state });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/activity");
   await page
     .getByRole("button", { name: "Установить и выбрать экономичный режим" })
     .click();

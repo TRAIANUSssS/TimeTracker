@@ -19,6 +19,7 @@ class Application:
     track_titles: bool
     created_at: int
     updated_at: int
+    color: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

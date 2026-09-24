@@ -1,10 +1,36 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { dateLabel, isoDate, minuteValue, timeLabel } from "./format";
+import {
+  dateLabel,
+  isoDate,
+  minuteValue,
+  timeLabel,
+  personalToday,
+} from "./format";
 import type { Filters } from "./types";
 
 export function Icon({ name, size = 20 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
+    activity: <path d="M3 12h4l3-8 4 16 3-8h4" />,
+    monitor: (
+      <>
+        <rect x="3" y="4" width="18" height="13" rx="2" />
+        <path d="M12 17v4m-4 0h8" />
+      </>
+    ),
+    shield: <path d="M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7l-9-4Z" />,
+    play: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="m10 8 6 4-6 4Z" />
+      </>
+    ),
+    search: (
+      <>
+        <circle cx="10" cy="10" r="7" />
+        <path d="m16 16 5 5" />
+      </>
+    ),
     calendar: (
       <>
         <rect x="3" y="5" width="18" height="16" rx="3" />
@@ -39,6 +65,12 @@ export function Icon({ name, size = 20 }: { name: string; size?: number }) {
       <>
         <circle cx="12" cy="12" r="9" />
         <path d="M12 6v6l4 3" />
+      </>
+    ),
+    lock: (
+      <>
+        <rect x="5" y="10" width="14" height="11" rx="2" />
+        <path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3" />
       </>
     ),
   };
@@ -104,8 +136,8 @@ export function DateRange({
     }
   };
   const preset = (days: number) => {
-    const end = new Date(),
-      start = new Date();
+    const end = new Date(`${personalToday()}T12:00:00`),
+      start = new Date(end);
     start.setDate(start.getDate() - days + 1);
     onChange(isoDate(start), isoDate(end));
     setOpen(false);
@@ -197,7 +229,7 @@ export function DateRange({
                           key={day}
                           aria-label={day}
                           disabled={outside}
-                          className={`${outside ? "outside" : ""} ${day >= low && day <= high ? "in-range" : ""} ${day === low || day === high ? "range-end" : ""} ${day === isoDate(new Date()) ? "today" : ""}`}
+                          className={`${outside ? "outside" : ""} ${day >= low && day <= high ? "in-range" : ""} ${day === low || day === high ? "range-end" : ""} ${day === personalToday() ? "today" : ""}`}
                           onMouseEnter={() => setHover(day)}
                           onClick={() => select(day)}
                         >
@@ -231,6 +263,17 @@ export function TimeRange({
   const [values, setValues] = useState([filters.time_from, filters.time_to]),
     [error, setError] = useState("");
   const cancelled = useRef(false);
+  const dayStart = minuteValue(filters.personal_day_start || "00:00");
+  const clockLabel = (offset: number) =>
+    dayStart === 0 && offset === 1440
+      ? "24:00"
+      : timeLabel((dayStart + offset) % 1440);
+  const position = (value: string, end: boolean) => {
+    const raw = minuteValue(value);
+    if (end && (raw === dayStart || (dayStart === 0 && raw === 1440)))
+      return 1440;
+    return (raw - dayStart + 1440) % 1440;
+  };
   useEffect(() => {
     setValues([filters.time_from, filters.time_to]);
     setError("");
@@ -243,7 +286,7 @@ export function TimeRange({
       setError("Введите время в формате ЧЧ:ММ");
       return;
     }
-    if (next[0] === next[1]) {
+    if (next[0] === next[1] && minuteValue(next[0]) !== dayStart) {
       setError("Начало и конец должны отличаться");
       return;
     }
@@ -251,11 +294,11 @@ export function TimeRange({
     onChange(next[0], next[1]);
   }
   const a = valid(values[0], 0)
-      ? minuteValue(values[0])
-      : minuteValue(filters.time_from),
+      ? position(values[0], false)
+      : position(filters.time_from, false),
     b = valid(values[1], 1)
-      ? minuteValue(values[1])
-      : minuteValue(filters.time_to);
+      ? position(values[1], true)
+      : position(filters.time_to, true);
   const fill =
     a <= b
       ? `linear-gradient(to right, var(--neutral-200) ${a / 14.4}%, var(--pink-400) ${a / 14.4}%, var(--pink-400) ${b / 14.4}%, var(--neutral-200) ${b / 14.4}%)`
@@ -306,7 +349,7 @@ export function TimeRange({
                 i === 0 ? 1425 : 1440,
                 Math.round(Number(e.target.value) / 15) * 15,
               );
-              setValues(values.map((x, j) => (j === i ? timeLabel(n) : x)));
+              setValues(values.map((x, j) => (j === i ? clockLabel(n) : x)));
             }}
             onPointerUp={() => commit()}
             onKeyDown={(e) => {
@@ -323,7 +366,7 @@ export function TimeRange({
                     v + (["ArrowLeft", "ArrowDown"].includes(e.key) ? -15 : 15),
                   ),
                 );
-                setValues(values.map((x, j) => (j === i ? timeLabel(n) : x)));
+                setValues(values.map((x, j) => (j === i ? clockLabel(n) : x)));
               }
             }}
             onKeyUp={(e) => {
@@ -332,14 +375,22 @@ export function TimeRange({
           />
         ))}
         <div className="slider-ticks">
-          {["00:00", "06:00", "12:00", "18:00", "24:00"].map((t) => (
-            <span key={t}>{t}</span>
+          {[0, 360, 720, 1080, 1440].map((offset) => (
+            <span key={offset}>
+              {clockLabel(offset)}
+              {dayStart > 0 && dayStart + offset >= 1440 ? "⁺¹" : ""}
+            </span>
           ))}
         </div>
       </div>
       {textInput(1)}
       <div className="time-hint" role={error ? "alert" : undefined}>
-        {error || (b < a ? "До следующего дня" : "")}
+        {error ||
+          (dayStart + b + (b < a ? 1440 : 0) >= 2880
+            ? "Конец — через 2 дня"
+            : b < a || (dayStart > 0 && b + dayStart >= 1440)
+              ? "Конец — на следующий день"
+              : "")}
       </div>
     </div>
   );

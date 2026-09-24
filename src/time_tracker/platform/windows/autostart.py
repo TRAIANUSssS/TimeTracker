@@ -47,6 +47,21 @@ class Autostart:
         except FileNotFoundError:
             return False
 
+    def refresh_if_configured(self) -> bool:
+        """Point an existing opt-in entry at this executable after an update or move."""
+        import winreg
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.key) as key:
+                existing, _ = winreg.QueryValueEx(key, VALUE_NAME)
+        except FileNotFoundError:
+            return False
+        database_argument = subprocess.list2cmdline([str(self.database_path.resolve())])
+        if database_argument.casefold() not in existing.casefold():
+            return False
+        self.set_enabled(True)
+        return True
+
     def set_enabled(self, enabled: bool) -> None:
         import winreg
 

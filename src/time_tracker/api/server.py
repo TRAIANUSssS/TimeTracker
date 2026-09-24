@@ -14,8 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 class ApiServer:
-    def __init__(self, runtime, *, port=6969, collection_mode=None):
-        self.commands = SettingsMailbox(runtime)
+    def __init__(
+        self, runtime, *, port=6969, collection_mode=None, controller=None, autostart=None
+    ):
+        self.commands = SettingsMailbox(runtime, controller=controller, autostart=autostart)
         self.app = create_app(
             runtime.database,
             commands=self.commands,
@@ -43,6 +45,13 @@ class ApiServer:
         return f"http://127.0.0.1:{self.port}"
 
     def start(self):
+        # The runtime lock and database are ready at this point. Refreshing earlier
+        # could let a failed second instance replace a valid Windows Run command.
+        if self.commands.autostart is not None:
+            try:
+                self.commands.autostart.refresh_if_configured()
+            except (OSError, ValueError):
+                logger.warning("Cannot refresh the autostart command", exc_info=True)
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):

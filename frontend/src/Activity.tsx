@@ -136,7 +136,9 @@ export function Timeline({ data }: { data: Activity }) {
     const key = s.application_id ? `app-${s.application_id}` : s.type;
     if (!legend.has(key))
       legend.set(key, {
-        color: s.application_id ? appColor(s.application_id) : colors[s.type],
+        color: s.application_id
+          ? s.color || appColor(s.application_id)
+          : colors[s.type],
         name: applicationName(s.name) || names[s.type],
       });
   });
@@ -153,7 +155,7 @@ export function Timeline({ data }: { data: Activity }) {
               left: `${percentage(s.started_at)}%`,
               width: `${(100 * (s.ended_at - s.started_at)) / span}%`,
               background: s.application_id
-                ? appColor(s.application_id)
+                ? s.color || appColor(s.application_id)
                 : colors[s.type],
             }}
             content={segmentTip(s, data.timezone)}
@@ -229,7 +231,7 @@ function cellTip(cell: Cell) {
     <>
       <strong>
         {title}, {cell.local_time_from}–{cell.local_time_to}
-        {cell.day_offset === 1 ? " · следующий день" : ""}
+        {cell.day_offset > 0 ? ` · +${cell.day_offset} д.` : ""}
       </strong>
       {status === "missing_hour" ? (
         <span>Час отсутствует из-за перевода часов</span>
@@ -288,7 +290,7 @@ export function Heatmap({ data }: { data: Activity }) {
         {columns.map((c) => (
           <span key={`${c.day_offset}-${c.hour}`}>
             {String(c.hour).padStart(2, "0")}
-            {c.day_offset === 1 && <sup>+1</sup>}
+            {c.day_offset > 0 && <sup>+{c.day_offset}</sup>}
           </span>
         ))}
       </div>

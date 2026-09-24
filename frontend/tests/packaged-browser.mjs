@@ -47,8 +47,9 @@ try {
     await page.getByRole("button", { name: "Настройки", exact: true }).click();
     await page.reload();
     await page
-        .getByRole("heading", { name: "Режим сбора", exact: true })
+        .getByRole("heading", { name: "Приложения и приватность", exact: true })
         .waitFor();
+    await page.getByRole("link", { name: "Сбор активности", exact: true }).click();
     await page.getByRole("radio", { name: /^Обычный/ }).waitFor();
     if (await page.getByRole("alert").count())
         throw new Error("Collection settings request failed");

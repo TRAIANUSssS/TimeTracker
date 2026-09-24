@@ -92,13 +92,16 @@ class TimeSelection:
     time_from: str
     time_to: str
     timezone: str
+    personal_day_start: str = "00:00"
+    full_day: bool = False
 
     def __post_init__(self):
         if self.date_from > self.date_to:
             raise ValueError("date_from must not follow date_to")
         if self.date_from.year < 2 or self.date_to.year > 9998:
             raise ValueError("Supported date years: 2..9998")
-        if minutes(self.time_from) == minutes(self.time_to, end=True):
+        minutes(self.personal_day_start)
+        if minutes(self.time_from) == minutes(self.time_to, end=True) and not self.full_day:
             raise ValueError("Time range must not be empty")
         ZoneInfo(self.timezone)
 
@@ -109,7 +112,14 @@ class TimeSelection:
     def cells(self) -> list[HourCell]:
         result = []
         lower, upper = minutes(self.time_from), minutes(self.time_to, end=True)
-        if upper < lower:
+        day_start = minutes(self.personal_day_start)
+        if lower < day_start:
+            lower += 1440
+        if upper < day_start:
+            upper += 1440
+        if self.full_day:
+            lower, upper = day_start, day_start + 1440
+        elif upper <= lower:
             upper += 1440
         for index in range(self.days):
             anchor = self.date_from + timedelta(days=index)

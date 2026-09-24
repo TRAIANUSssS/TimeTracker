@@ -185,7 +185,12 @@ class CollectionWorker:
                             self.controller.observation_interrupted()
                     else:
                         logger.info("Windows notification: %s", item.kind)
-                        self.controller.notify(item.kind, item.observed_at, defer_resume=True)
+                        try:
+                            self.controller.notify(item.kind, item.observed_at, defer_resume=True)
+                        except ObservationInterrupted:
+                            if item.kind == "toggle_pause":
+                                self.notify("toggle_pause")
+                            self.controller.observation_interrupted()
                     count("queue.handled")
                     continue
                 if stopping:

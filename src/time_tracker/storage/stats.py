@@ -7,13 +7,40 @@ from time_tracker.domain.intervals import Coverage, duration, intersect, union
 from time_tracker.domain.time_windows import TimeSelection, time_label
 
 
-def application_json(app):
+def application_json(app, *, active_ms=0):
     return {
         "id": app["id"],
         "name": app["name"],
         "ignored": bool(app["ignored"]),
         "track_titles": bool(app["track_titles"]),
+        "color": app["color"],
         "icon_url": f"/applications/{app['id']}/icon",
+        "active_ms": active_ms,
+    }
+
+
+def application_active_totals(connection, now):
+    """Return foreground time that overlaps ACTIVE state, across all saved history."""
+    return {
+        row["application_id"]: row["active_ms"]
+        for row in connection.execute(
+            """
+            SELECT f.application_id,
+                   COALESCE(SUM(
+                       MAX(0,
+                           MIN(COALESCE(f.ended_at, ?), COALESCE(s.ended_at, ?))
+                           - MAX(f.started_at, s.started_at)
+                       )
+                   ), 0) AS active_ms
+            FROM foreground_sessions AS f
+            JOIN system_state_sessions AS s
+              ON s.state = 'ACTIVE'
+             AND s.started_at < COALESCE(f.ended_at, ?)
+             AND COALESCE(s.ended_at, ?) > f.started_at
+            GROUP BY f.application_id
+            """,
+            (now, now, now, now),
+        )
     }
 
 
@@ -80,6 +107,7 @@ class Statistics:
                 "application_id": app_id,
                 "name": self.applications[app_id]["name"],
                 **values,
+                "color": self.applications[app_id]["color"],
                 "icon_url": f"/applications/{app_id}/icon",
             }
             for app_id, values in totals.items()
@@ -134,6 +162,7 @@ class Statistics:
                                 "application_id": app["id"],
                                 "name": app["name"],
                                 "title": fg["window_title"],
+                                "color": app["color"],
                             }
                         )
             if (

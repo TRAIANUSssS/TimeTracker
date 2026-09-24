@@ -60,11 +60,18 @@ def run_windows(database_path, *, api_port=6969, process_events=None, started_fr
             power_history=PowerHistory() if modern else None,
             process_events=source,
         )
+        autostart = Autostart(database.path, api_port)
         TrayApplication(
             controller,
             api,
-            service=ApiServer(runtime, port=api_port, collection_mode=collection_mode),
-            autostart=Autostart(database.path, api_port),
+            service=ApiServer(
+                runtime,
+                port=api_port,
+                collection_mode=collection_mode,
+                controller=controller,
+                autostart=autostart,
+            ),
+            autostart=autostart,
             notify_on_start=not started_from_autostart,
         ).run()
     except Exception:

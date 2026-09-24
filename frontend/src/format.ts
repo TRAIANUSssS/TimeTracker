@@ -1,11 +1,42 @@
 import type { Filters } from "./types";
+import { defaultDisplay } from "./preferences";
+import type { Display, TimeUnits } from "./preferences";
+let display: Display = defaultDisplay;
+export function configureFormat(value: Display) {
+  display = value;
+}
+export function personalToday(
+  now = new Date(),
+  start = display.personal_day_start,
+  zone = display.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+) {
+  const day = localDay(now.getTime(), zone);
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: zone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(now);
+  const date = new Date(`${day}T12:00:00`);
+  if (minuteValue(parts) < minuteValue(start)) date.setDate(date.getDate() - 1);
+  return isoDate(date);
+}
 // Golden-angle spacing assigns every newly seen application a durable, distinct hue.
 // Unlike a short palette, it does not start repeating when the app catalogue grows.
 export const appColor = (id: number) =>
   `hsl(${(id * 137.508 + 338) % 360} 62% 72%)`;
 
+export function isLockApplication(name: string | undefined) {
+  return [
+    "lockapp",
+    "lockapp.exe",
+    "lockscreen",
+    "lockscreen.exe",
+    "блокировка",
+  ].includes(name?.trim().toLowerCase() || "");
+}
 export function applicationName(name: string | undefined) {
-  return name?.trim().toLowerCase() === "lockapp.exe" ? "Блокировка" : name;
+  return isLockApplication(name) ? "Блокировка" : name;
 }
 export const dayNames = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 export const longDayNames = [
@@ -17,14 +48,54 @@ export const longDayNames = [
   "Суббота",
   "Воскресенье",
 ];
-export function duration(ms: number | null | undefined): string {
+export function duration(
+  ms: number | null | undefined,
+  units: TimeUnits = display.time_units,
+): string {
   if (ms == null) return "—";
-  if (ms <= 0) return "0 м.";
-  if (ms < 60000) return "<1 м.";
-  const m = Math.floor(ms / 60000),
-    d = Math.floor(m / 1440),
-    h = Math.floor((m % 1440) / 60);
-  return [d ? `${d} д.` : "", h ? `${h} ч.` : "", m % 60 ? `${m % 60} м.` : ""]
+  const selected = (
+    [
+      ["days", 86400000, "д."],
+      ["hours", 3600000, "ч."],
+      ["minutes", 60000, "м."],
+    ] as const
+  ).filter(([key]) => units[key]);
+  if (!selected.length) return duration(ms, defaultDisplay.time_units);
+  const smallest = selected[selected.length - 1];
+  if (ms <= 0) return `0 ${smallest[2]}`;
+  let smallestValue = ms / smallest[1];
+  if (selected.length > 1) {
+    let remainder = ms;
+    for (const [, size] of selected.slice(0, -1)) {
+      remainder -= Math.floor(remainder / size) * size;
+    }
+    smallestValue = remainder / smallest[1];
+  }
+  const fractionStep =
+    selected.length === 1
+      ? smallestValue < 10
+        ? 0.1
+        : 1
+      : smallestValue > 1
+        ? 1
+        : 0.1;
+  let remaining =
+    Math.round(ms / (smallest[1] * fractionStep)) * smallest[1] * fractionStep;
+  if (remaining === 0) return `<0,1 ${smallest[2]}`;
+  return selected
+    .map(([, size, label], index) => {
+      const value =
+        index === selected.length - 1
+          ? remaining / size
+          : Math.floor(remaining / size);
+      remaining -= value * size;
+      return value > 0
+        ? `${value.toLocaleString("ru-RU", {
+            maximumFractionDigits:
+              index === selected.length - 1 && fractionStep < 1 ? 1 : 0,
+          })} ${label}`
+        : "";
+    })
     .filter(Boolean)
     .join(" ");
 }
@@ -36,13 +107,19 @@ export function dateLabel(day: string, year = false) {
   return `${d}.${m}${year ? `.${y}` : ""}`;
 }
 export function defaults(): Filters {
-  const today = isoDate(new Date());
+  const today = personalToday();
   return {
     date_from: today,
     date_to: today,
-    time_from: "00:00",
-    time_to: "24:00",
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    time_from: display.personal_day_start,
+    time_to:
+      display.personal_day_start === "00:00"
+        ? "24:00"
+        : display.personal_day_start,
+    timezone:
+      display.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+    personal_day_start: display.personal_day_start,
+    full_day: "true",
     active_only: true,
   };
 }
