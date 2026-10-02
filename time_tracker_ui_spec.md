@@ -558,6 +558,9 @@ ease-out
 
 ## Расширенная
 
+> Этот подраздел фиксирует исходное состояние MVP. Реализованная расширенная страница
+> описана в `docs/time_tracker_advanced_statistics_ui_spec.md`.
+
 Пока вкладка пустая.
 
 Показывать centered empty-state:
@@ -2441,6 +2444,9 @@ Advanced:
 ---
 
 # 79. Advanced tab
+
+Этот раздел относится к исходному MVP-placeholder; актуальный контракт вынесен в
+`docs/time_tracker_advanced_statistics_ui_spec.md`.
 
 Пока empty state.
 

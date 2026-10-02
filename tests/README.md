@@ -107,9 +107,10 @@ Dashboard и сборка:
 - `test_dashboard_startup.py`: same-origin HTML/assets и маршруты-заглушки,
   передача полной DST-шкалы, отсутствие сборки UI, команда автозапуска и её удаление
   в отдельном ключе реестра, действия меню трея;
-- `frontend/tests/dashboard.spec.ts`: 7 браузерных сценариев на Edge headless —
+- `frontend/tests/dashboard.spec.ts`: 8 браузерных сценариев на Edge headless —
   фильтры/refresh/expand, запросы только нужных секций, точные минуты и ночные окна,
-  ошибки/повтор, поколения запросов, midnight marker и состояния heatmap;
+  ошибки/повтор, поколения запросов, midnight marker, состояния heatmap и расширенная
+  аналитика с таблицей, графиками и настраиваемой матрицей переходов;
 - `test_packaged_live.py`: opt-in запуск собранного exe с настоящим polling,
   API/PATCH, heartbeat и SQLite, загрузка dashboard в Edge через реальный API,
   отсутствие внешних запросов и штатное завершение. Вызывать после сборки

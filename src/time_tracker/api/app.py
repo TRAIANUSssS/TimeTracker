@@ -4,6 +4,8 @@ import hashlib
 import json
 import secrets
 import sqlite3
+from dataclasses import replace
+from datetime import timedelta
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -16,6 +18,12 @@ from time_tracker import __version__
 from time_tracker.api.commands import WriterUnavailable
 from time_tracker.api.schemas import (
     ActivityFilters,
+    AdvancedApplications,
+    AdvancedDynamics,
+    AdvancedKpi,
+    AdvancedTransitionFilters,
+    AdvancedTransitions,
+    AdvancedWeekly,
     AppFilters,
     Application,
     ApplicationPatch,
@@ -163,6 +171,77 @@ def create_app(database, *, commands=None, clock=None, collection_mode=None) -> 
     @app.get("/stats/activity", response_model=list[DateCell] | list[WeekdayCell])
     def activity(filters: Annotated[ActivityFilters, Query()]):
         return stats(filters, "activity")
+
+    def advanced_stats(filters, operation, *, comparison_days=None, **kwargs):
+        now = clock.now_ms()
+        with database.reader() as connection:
+            from time_tracker.settings import read_settings
+
+            selection = filters.selection(read_settings(connection)["display"])
+            reader = Statistics(connection, selection, now)
+            if comparison_days is None:
+                return getattr(reader, operation)(**kwargs)
+            try:
+                previous_to = selection.date_from - timedelta(days=1)
+                previous_from = previous_to - timedelta(days=comparison_days - 1)
+                previous = (
+                    Statistics(
+                        connection,
+                        replace(
+                            selection,
+                            date_from=previous_from,
+                            date_to=previous_to,
+                        ),
+                        now,
+                    )
+                    if previous_from.year >= 2
+                    else None
+                )
+            except OverflowError:
+                previous = None
+            return getattr(reader, operation)(previous, **kwargs)
+
+    @app.get("/stats/advanced/kpi", response_model=AdvancedKpi)
+    def advanced_kpi(filters: Annotated[Filters, Query()]):
+        selection = filters.selection()
+        return advanced_stats(
+            filters, "advanced_kpi", comparison_days=selection.days
+        )
+
+    @app.get("/stats/advanced/weekly", response_model=AdvancedWeekly)
+    def advanced_weekly(filters: Annotated[Filters, Query()]):
+        selection = filters.selection()
+        if selection.days == 1:
+            try:
+                filters = filters.model_copy(
+                    update={"date_from": selection.date_from - timedelta(days=6)}
+                )
+            except OverflowError:
+                pass
+        return advanced_stats(
+            filters,
+            "advanced_weekly",
+            comparison_days=7 if selection.days <= 7 else selection.days,
+        )
+
+    @app.get("/stats/advanced/dynamics", response_model=AdvancedDynamics)
+    def advanced_dynamics(filters: Annotated[Filters, Query()]):
+        return advanced_stats(filters, "advanced_dynamics")
+
+    @app.get("/stats/advanced/apps", response_model=AdvancedApplications)
+    def advanced_apps(filters: Annotated[Filters, Query()]):
+        return advanced_stats(filters, "advanced_apps")
+
+    @app.get("/stats/advanced/transitions", response_model=AdvancedTransitions)
+    def advanced_transitions(filters: Annotated[AdvancedTransitionFilters, Query()]):
+        try:
+            return advanced_stats(
+                filters,
+                "advanced_transitions",
+                application_ids=filters.application_ids,
+            )
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
 
     @app.get("/export/{export_format}")
     def export_history(

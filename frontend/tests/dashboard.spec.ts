@@ -65,7 +65,16 @@ async function fixture(page) {
     }),
   );
   await page.clock.setFixedTime(new Date("2026-09-08T22:00:00+03:00"));
-  const counts = { apps: 0, system: 0, timeline: 0, activity: 0 };
+  const counts: Record<string, number> = {
+    apps: 0,
+    system: 0,
+    timeline: 0,
+    activity: 0,
+    kpi: 0,
+    weekly: 0,
+    dynamics: 0,
+    transitions: 0,
+  };
   await page.route("**/applications/*/icon", (route) =>
     route.fulfill({ status: 404, body: "" }),
   );
@@ -73,6 +82,154 @@ async function fixture(page) {
     const url = new URL(route.request().url()),
       path = url.pathname.split("/").pop()!;
     counts[path]++;
+    if (url.pathname.includes("/stats/advanced/")) {
+      if (path === "kpi")
+        return route.fulfill({
+          json: {
+            has_tracking_data: true,
+            context_switches: 184,
+            context_switches_per_active_hour: 24.3,
+            longest_focus: {
+              duration_ms: 6420000,
+              started_at: base,
+              ended_at: base + 6420000,
+              application: {
+                id: 1,
+                name: appNames[0],
+                icon_url: "/applications/1/icon",
+              },
+            },
+            average_active_per_day_ms: 19080000,
+            comparison: {
+              has_tracking_data: true,
+              previous_context_switches: 209,
+              context_switches_change_percent: -12,
+              previous_switches_per_active_hour: 26.1,
+              previous_average_active_per_day_ms: 17460000,
+            },
+          },
+        });
+      if (path === "weekly") {
+        const start = Date.parse(
+            `${url.searchParams.get("date_from")}T00:00:00Z`,
+          ),
+          end = Date.parse(`${url.searchParams.get("date_to")}T00:00:00Z`),
+          selectedDays = Math.round((end - start) / 86400000) + 1,
+          chartStart = selectedDays === 1 ? start - 6 * 86400000 : start,
+          chartDays = selectedDays === 1 ? 7 : selectedDays;
+        return route.fulfill({
+          json: {
+            mode: selectedDays <= 7 ? "week" : "weekday_average",
+            days:
+              selectedDays <= 7
+                ? Array.from({ length: chartDays }, (_, index) => {
+                    const date = new Date(chartStart + index * 86400000),
+                      active = (4 + ((index * 7) % 4)) * 3600000;
+                    return {
+                      weekday: ((date.getUTCDay() + 6) % 7) + 1,
+                      date: date.toISOString().slice(0, 10),
+                      active_ms: active,
+                      tracked_ms: 8 * 3600000,
+                      status: "data",
+                    };
+                  })
+                : Array.from({ length: 7 }, (_, index) => ({
+                    weekday: index + 1,
+                    average_active_ms: (4 + ((index * 7) % 4)) * 3600000,
+                    sample_days: 4,
+                  })),
+            previous_period_average_ms: 16680000,
+          },
+        });
+      }
+      if (path === "dynamics") {
+        const start = Date.parse(
+            `${url.searchParams.get("date_from")}T00:00:00Z`,
+          ),
+          end = Date.parse(`${url.searchParams.get("date_to")}T00:00:00Z`),
+          selectedDays = Math.round((end - start) / 86400000) + 1;
+        if (selectedDays === 1)
+          return route.fulfill({
+            json: {
+              granularity: "hour",
+              points: Array.from({ length: 24 }, (_, hour) => ({
+                start: `${url.searchParams.get("date_from")}T${String(hour).padStart(2, "0")}:00`,
+                end: `${url.searchParams.get("date_from")}T${String(hour + 1).padStart(2, "0")}:00`,
+                label: `${String(hour).padStart(2, "0")}:00`,
+                end_label: `${String((hour + 1) % 24).padStart(2, "0")}:00`,
+                active_ms: (20 + ((hour * 7) % 38)) * 60000,
+                total_active_ms: (20 + ((hour * 7) % 38)) * 60000,
+                average_per_day_ms: null,
+                sample_days: 1,
+                status: "data",
+              })),
+            },
+          });
+        return route.fulfill({
+          json: {
+            granularity: "day",
+            points: Array.from({ length: selectedDays }, (_, index) => {
+              const pointStart = new Date(start + index * 86400000),
+                pointEnd = new Date(start + (index + 1) * 86400000),
+                active = (4 + ((index * 5) % 4)) * 3600000;
+              return {
+                start: pointStart.toISOString().slice(0, 10),
+                end: pointEnd.toISOString().slice(0, 10),
+                active_ms: active,
+                total_active_ms: active,
+                average_per_day_ms: active,
+                sample_days: 1,
+                status: "data",
+              };
+            }),
+          },
+        });
+      }
+      if (path === "apps")
+        return route.fulfill({
+          json: {
+            has_tracking_data: true,
+            items: rows.map((row, index) => ({
+              ...row,
+              color: null,
+              usage_ratio: row.active_ms / row.running_ms,
+              launch_count: 18 + index,
+              average_session_ms: 640000 - index * 12000,
+              max_session_ms: 6420000 - index * 120000,
+            })),
+          },
+        });
+      const allApplications = appNames.map((name, index) => ({
+          id: index + 1,
+          name,
+          icon_url: `/applications/${index + 1}/icon`,
+          color: null,
+          participation: 100 - index,
+        })),
+        requested = url.searchParams.getAll("application_ids").map(Number),
+        selected = requested.length
+          ? requested.map((id) => allApplications[id - 1])
+          : allApplications.slice(0, 10),
+        pairs = selected.slice(0, -1).map((app, index) => ({
+          from_application_id: app.id,
+          to_application_id: selected[index + 1].id,
+          count: 47 - index * 3,
+        }));
+      return route.fulfill({
+        json: {
+          has_tracking_data: true,
+          top_transitions: [
+            { from_application_id: 1, to_application_id: 2, count: 47 },
+            { from_application_id: 2, to_application_id: 1, count: 39 },
+            { from_application_id: 1, to_application_id: 5, count: 31 },
+          ],
+          default_applications: allApplications.slice(0, 10),
+          selected_applications: selected,
+          applications: allApplications,
+          matrix: pairs,
+        },
+      });
+    }
     if (path === "apps")
       return route.fulfill({
         json: {
@@ -253,7 +410,7 @@ test("time slider commits on release, supports night range, rejects invalid text
   await expect(page.getByRole("alert")).toContainText("Введите время");
   expect(counts.apps).toBe(n);
 });
-test("delayed skeleton, section failure retry, empty metadata and placeholder navigation", async ({
+test("delayed skeleton, section failure retry, empty metadata and advanced navigation", async ({
   page,
 }) => {
   await fixture(page);
@@ -280,9 +437,7 @@ test("delayed skeleton, section failure retry, empty metadata and placeholder na
     }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Расширенная", exact: true }).click();
-  await expect(
-    page.getByText("Расширенная статистика появится позже"),
-  ).toBeVisible();
+  await expect(page.getByText("Переключения", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Настройки", exact: true }).click();
   await expect(
     page.getByRole("heading", {
@@ -301,6 +456,76 @@ test("delayed skeleton, section failure retry, empty metadata and placeholder na
   await expect(page.getByLabel("Начало времени", { exact: true })).toHaveValue(
     "00:00",
   );
+});
+
+test("advanced analytics layout, details, matrix picker and shared filters", async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.goto("/advanced");
+  await expect(page.getByText("184", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("advanced-weekly-chart")).toBeVisible();
+  await expect(page.getByTestId("advanced-dynamics-chart")).toBeVisible();
+  await expect(page.locator(".weekly-slot.data")).toHaveCount(7);
+  await expect(page.locator(".weekly-slot.selected")).toHaveCount(1);
+  await expect(page.locator(".dynamics-labels > span")).toHaveCount(24);
+  await page.screenshot({
+    path: "test-results/advanced-one-day-1920.png",
+    fullPage: true,
+  });
+  await expect(page.getByTestId("advanced-app-row")).toHaveCount(10);
+  await expect(
+    page.getByLabel("Только активные", { exact: true }),
+  ).not.toBeVisible();
+  await expect(
+    page
+      .locator(".advanced-filters")
+      .getByLabel("Конец времени", { exact: true }),
+  ).toHaveValue("24:00");
+  await page.getByRole("button", { name: "Выбрать диапазон дат" }).click();
+  await page.getByRole("button", { name: "Последние 7 дней" }).click();
+  await expect(page.locator(".weekly-slot.data")).toHaveCount(7);
+  await page.screenshot({
+    path: "test-results/advanced-applications-1920.png",
+    fullPage: true,
+  });
+
+  await page.getByRole("tab", { name: "Переходы" }).click();
+  await expect(page.getByText("Самые частые переходы")).toBeVisible();
+  await expect(page.locator(".matrix-cell")).toHaveCount(100);
+  await page
+    .getByRole("button", { name: "Заменить Visual Studio Code" })
+    .first()
+    .click();
+  await page.getByPlaceholder("Поиск приложения...").fill("Windows Terminal");
+  await page
+    .getByRole("dialog", { name: "Выбор приложения" })
+    .getByRole("button")
+    .filter({ hasText: "Windows Terminal" })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Сбросить к топ-10" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Сбросить к топ-10" }).click();
+  await expect(
+    page.getByRole("button", { name: "Сбросить к топ-10" }),
+  ).toHaveCount(0);
+
+  await page.screenshot({
+    path: "test-results/advanced-1920.png",
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1366, height: 900 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
 });
 test("generation rejects old success and error even when cancellation is ignored", async ({
   page,

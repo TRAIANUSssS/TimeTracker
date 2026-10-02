@@ -1,9 +1,14 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { appColor, applicationName, duration, isLockApplication } from "./format";
+import {
+  appColor,
+  applicationName,
+  duration,
+  isLockApplication,
+} from "./format";
 import { Icon } from "./controls";
 import type { Apps, AppRow } from "./types";
 
-function AppIcon({ app }: { app: AppRow }) {
+export function AppIcon({ app }: { app: AppRow }) {
   const [failed, setFailed] = useState(false);
   return (
     <span

@@ -22,6 +22,11 @@ OpenAPI доступен на `/openapi.json`, интерактивная док
 | `GET /stats/context-switches` | `context_switches` |
 | `GET /stats/timeline` | Массив application/system/other/unknown/no_data сегментов; одна дата |
 | `GET /stats/activity` | Массив часовых ячеек; минимум две даты |
+| `GET /stats/advanced/kpi` | Переключения, частота, longest focus, среднее за день и previous-period comparison |
+| `GET /stats/advanced/weekly` | Недельный контекст, до 7 выбранных дат либо weekday averages и comparison line |
+| `GET /stats/advanced/dynamics` | Часовые, дневные, недельные или месячные точки динамики |
+| `GET /stats/advanced/apps` | Active/running, usage и running-session metrics по приложениям |
+| `GET /stats/advanced/transitions` | Top transitions, adaptive matrix и список приложений для picker |
 | `GET /export/csv` | Подробные интервалы выбранного периода в CSV для Excel |
 | `GET /export/json` | Подробные интервалы и метаданные выбранного периода в JSON |
 | `GET /applications` | Все приложения, включая ignored, и текущие параметры |
@@ -87,6 +92,36 @@ Context switches считаются в момент начала новой fore
 Учитывается предшествующее не-ignored приложение перед нижней границей фильтра,
 но переход должен попасть в выбранное ACTIVE. Между разными tracker runs цепочка
 сбрасывается: новый запуск не является наблюдавшимся переключением приложения.
+
+## Расширенная статистика
+
+Advanced endpoints используют те же date/time/timezone/personal-day фильтры и один
+request timestamp. Для KPI и comparison line предыдущий период непосредственно
+предшествует выбранному и имеет ту же длину; короткий weekly chart сравнивается с
+предыдущими семью personal days. При выборе одной даты weekly endpoint возвращает её
+вместе с шестью предыдущими датами; это контекст только для графика и не расширяет
+период остальных advanced endpoints.
+
+Дневной агрегат различает `data`, `no_data` и `future`. Наблюдавшийся день с нулевой
+активностью входит в среднее как ноль, а день без system-state history и будущий день
+исключаются. Для одной даты Dynamics возвращает точки по выбранным часовым ячейкам,
+для диапазона 2–31 день использует дни, затем календарные недели до 183 дней и
+календарные месяцы для более длинного диапазона. Почасовые `no_data` и `future`
+не преобразуются в нули.
+
+Longest focus — непрерывное пересечение ACTIVE с foreground одного non-ignored приложения,
+разделённое на границах personal day. Смена title/HWND внутри приложения его не разрывает;
+другое/ignored/unknown приложение, системное не-ACTIVE состояние или no-data разрывают.
+
+В application analytics `launch_count` включает running sessions, начало которых попало
+в выбранные окна. Average/max используют их полную фактическую длительность; открытая
+сессия заканчивается общим `now`. Поэтому сессия, начавшаяся до периода, участвует в
+`running_ms`, но не является запуском периода. `usage_ratio = active_ms / running_ms`.
+
+Transition matrix использует ту же цепочку, что context switches. По умолчанию выбираются
+до десяти приложений с максимальной суммой incoming + outgoing; обе оси всегда содержат
+один набор. Повторяющийся query parameter `application_ids` задаёт до десяти уникальных
+non-ignored приложений для custom matrix. Неизвестные, ignored и повторные ID дают `422`.
 
 ## Timeline и heatmap
 

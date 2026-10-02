@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { dayCount } from "./format";
-import type { Activity, Apps, Filters, System } from "./types";
+import type {
+  Activity,
+  AdvancedApps,
+  AdvancedDynamics,
+  AdvancedKpi,
+  AdvancedTransitions,
+  AdvancedWeekly,
+  Apps,
+  Filters,
+  System,
+} from "./types";
 
 export type Resource<T> = {
   data: T | null;
@@ -37,6 +47,7 @@ function useResource<T>(
   key: string,
   work: (signal: AbortSignal) => Promise<T>,
   background = false,
+  enabled = true,
 ): Resource<T> {
   const [state, setState] = useState<Resource<T>>({
     data: null,
@@ -48,6 +59,10 @@ function useResource<T>(
   });
   const gate = useRef(new LatestRequest());
   useEffect(() => {
+    if (!enabled) {
+      gate.current.cancel();
+      return;
+    }
     setState((s) => ({
       ...s,
       pending: !background || s.data === null,
@@ -95,7 +110,7 @@ function useResource<T>(
       if (timer) clearTimeout(timer);
       current.cancel();
     };
-  }, [key]); // Key includes every request parameter; work is deliberately captured for this generation.
+  }, [key, enabled]); // Key includes every request parameter; work is captured for this generation.
   return state.key === key
     ? state
     : {
@@ -111,7 +126,12 @@ async function get(path: string, signal: AbortSignal) {
   if (!response.ok) throw new Error("Request failed");
   return response;
 }
-export function useDashboard(f: Filters, refresh: number, background = false) {
+export function useDashboard(
+  f: Filters,
+  refresh: number,
+  background = false,
+  enabled = true,
+) {
   const { active_only, ...base } = f;
   const query = new URLSearchParams(base).toString(),
     key = `${query}&refresh=${refresh}`;
@@ -126,11 +146,13 @@ export function useDashboard(f: Filters, refresh: number, background = false) {
       activeOnly: active_only,
     }),
     background,
+    enabled,
   );
   const system = useResource<System>(
     key,
     async (signal) => (await get(`/stats/system?${query}`, signal)).json(),
     background,
+    enabled,
   );
   const activity = useResource<Activity>(
     key,
@@ -151,6 +173,7 @@ export function useDashboard(f: Filters, refresh: number, background = false) {
       };
     },
     background,
+    enabled,
   );
   return {
     apps,
@@ -158,5 +181,73 @@ export function useDashboard(f: Filters, refresh: number, background = false) {
     activity,
     mode,
     pending: apps.pending || system.pending || activity.pending,
+  };
+}
+
+export function useAdvanced(
+  f: Filters,
+  refresh: number,
+  background = false,
+  enabled = true,
+  applicationIds: number[] = [],
+) {
+  const { active_only: _activeOnly, ...base } = f,
+    query = new URLSearchParams(base).toString(),
+    key = `${query}&refresh=${refresh}`;
+  const request = <T>(name: string, signal: AbortSignal) =>
+      get(`/stats/advanced/${name}?${query}`, signal).then(
+        (response) => response.json() as Promise<T>,
+      ),
+    kpi = useResource<AdvancedKpi>(
+      key,
+      (signal) => request("kpi", signal),
+      background,
+      enabled,
+    ),
+    weekly = useResource<AdvancedWeekly>(
+      key,
+      (signal) => request("weekly", signal),
+      background,
+      enabled,
+    ),
+    dynamics = useResource<AdvancedDynamics>(
+      key,
+      (signal) => request("dynamics", signal),
+      background,
+      enabled,
+    ),
+    apps = useResource<AdvancedApps>(
+      key,
+      (signal) => request("apps", signal),
+      background,
+      enabled,
+    ),
+    selected = applicationIds.map(String),
+    transitionsQuery = new URLSearchParams(base);
+  for (const id of selected) transitionsQuery.append("application_ids", id);
+  const transitions = useResource<AdvancedTransitions>(
+    `${key}&applications=${selected.join(",")}`,
+    async (signal) =>
+      (
+        await get(
+          `/stats/advanced/transitions?${transitionsQuery.toString()}`,
+          signal,
+        )
+      ).json(),
+    background,
+    enabled,
+  );
+  return {
+    kpi,
+    weekly,
+    dynamics,
+    apps,
+    transitions,
+    pending:
+      kpi.pending ||
+      weekly.pending ||
+      dynamics.pending ||
+      apps.pending ||
+      transitions.pending,
   };
 }

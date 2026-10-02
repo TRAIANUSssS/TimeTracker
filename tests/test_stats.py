@@ -305,3 +305,76 @@ def test_read_snapshot_does_not_mix_settings_updates(database):
         assert len(Statistics(c, chosen(), at(60)).apps()["items"]) == 1
     with database.reader() as c:
         assert Statistics(c, chosen(), at(60)).apps()["items"] == []
+
+
+def test_advanced_metrics_preserve_focus_launch_and_transition_semantics(database):
+    with database.transaction() as c:
+        seed(
+            c,
+            states=[("ACTIVE", 0, 30), ("IDLE", 30, 60)],
+            foreground=[
+                (1, 0, 10),
+                (1, 10, 15),
+                (2, 15, 20),
+                (3, 20, 25),
+                (1, 25, 30),
+            ],
+            running=[(1, -10, 30), (1, 40, 70), (2, 5, 25)],
+            ignored=[3],
+        )
+    with database.reader() as c:
+        current = Statistics(c, chosen(), at(60))
+        previous = Statistics(
+            c,
+            TimeSelection(date(2026, 9, 7), date(2026, 9, 7), "00:00", "24:00", "UTC"),
+            at(60),
+        )
+        kpi = current.advanced_kpi(previous)
+        assert kpi["context_switches"] == 2
+        assert kpi["context_switches_per_active_hour"] == 4
+        assert kpi["longest_focus"]["duration_ms"] == 15 * MINUTE
+        assert kpi["longest_focus"]["application"]["id"] == 1
+        assert kpi["average_active_per_day_ms"] == 30 * MINUTE
+        assert not kpi["comparison"]["has_tracking_data"]
+
+        apps = current.advanced_apps()["items"]
+        assert [item["application_id"] for item in apps] == [1, 2]
+        assert apps[0]["active_ms"] == 20 * MINUTE
+        assert apps[0]["running_ms"] == 50 * MINUTE
+        assert apps[0]["launch_count"] == 1
+        assert apps[0]["average_session_ms"] == 20 * MINUTE
+        assert apps[0]["max_session_ms"] == 20 * MINUTE
+
+        transitions = current.advanced_transitions()
+        assert transitions["top_transitions"] == [
+            {"from_application_id": 1, "to_application_id": 2, "count": 1},
+            {"from_application_id": 2, "to_application_id": 1, "count": 1},
+        ]
+        assert [app["id"] for app in transitions["default_applications"]] == [1, 2]
+        assert transitions["matrix"] == transitions["top_transitions"]
+
+
+def test_advanced_daily_statuses_exclude_missing_data_and_split_focus_at_day(database):
+    with database.transaction() as c:
+        seed(
+            c,
+            states=[("ACTIVE", 0, 2880)],
+            foreground=[(1, 0, 2880)],
+            running=[(1, 0, 2880)],
+        )
+    with database.reader() as c:
+        two_days = Statistics(c, chosen(days=2), at(2880))
+        assert two_days.longest_focus()["duration_ms"] == 1440 * MINUTE
+        assert [day["status"] for day in two_days.daily_activity()] == ["data", "data"]
+
+        three_days = Statistics(c, chosen(days=3), at(3 * 1440))
+        # The third selected personal day is elapsed but never observed.
+        assert [day["status"] for day in three_days.daily_activity()] == [
+            "data",
+            "data",
+            "no_data",
+        ]
+        assert three_days._daily_average() == 1440 * MINUTE
+
+        future = Statistics(c, chosen(days=3), at(60)).daily_activity()
+        assert [day["status"] for day in future] == ["data", "future", "future"]

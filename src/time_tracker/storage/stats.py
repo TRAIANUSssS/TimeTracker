@@ -2,6 +2,7 @@
 
 from bisect import bisect_right
 from collections import defaultdict
+from datetime import date, timedelta
 
 from time_tracker.domain.intervals import Coverage, duration, intersect, union
 from time_tracker.domain.time_windows import TimeSelection, time_label
@@ -87,7 +88,7 @@ class Statistics:
             f"{state.lower()}_ms": duration(windows) for state, windows in self.by_state.items()
         }
 
-    def apps(self, active_only=True):
+    def _application_totals(self):
         totals = defaultdict(lambda: {"active_ms": 0, "running_ms": 0})
         awake = union(
             w for state, windows in self.by_state.items() if state != "SLEEP" for w in windows
@@ -102,6 +103,10 @@ class Statistics:
                     grouped[row["application_id"]].append((row["started_at"], row["ended_at"]))
             for app_id, sessions in grouped.items():
                 totals[app_id][key] = duration(intersect(sessions, windows))
+        return totals
+
+    def apps(self, active_only=True):
+        totals = self._application_totals()
         sort_key = "active_ms" if active_only else "running_ms"
         items = [
             {
@@ -119,6 +124,364 @@ class Statistics:
             "has_tracking_data": bool(self.tracked.intervals),
             "has_running_data": any(v["running_ms"] > 0 for v in totals.values()),
             "items": items,
+        }
+
+    def daily_activity(self):
+        """Return one record per personal-day anchor without conflating zero and no data."""
+        grouped = defaultdict(list)
+        for cell in self.cells:
+            grouped[cell.date].extend(cell.windows)
+        result = []
+        day = self.selection.date_from
+        while day <= self.selection.date_to:
+            windows = union(grouped[day])
+            elapsed = intersect(windows, [(-(2**63), self.now)])
+            tracked_ms = self.tracked.measure(windows)
+            active_ms = self.active.measure(windows)
+            if not windows:
+                status = "no_data"
+            elif not elapsed:
+                status = "future"
+            elif tracked_ms:
+                status = "data"
+            else:
+                status = "no_data"
+            result.append(
+                {
+                    "date": day.isoformat(),
+                    "weekday": day.isoweekday(),
+                    "active_ms": active_ms if status == "data" else None,
+                    "tracked_ms": tracked_ms,
+                    "status": status,
+                }
+            )
+            day += timedelta(days=1)
+        return result
+
+    def _daily_average(self):
+        observed = [day for day in self.daily_activity() if day["status"] == "data"]
+        if not observed:
+            return None
+        return round(sum(day["active_ms"] for day in observed) / len(observed))
+
+    def longest_focus(self):
+        """Longest ACTIVE foreground run in one app, split at personal-day boundaries."""
+        grouped = defaultdict(list)
+        for row in self._sessions("foreground_sessions"):
+            app = self.applications[row["application_id"]]
+            if not app["ignored"]:
+                grouped[row["application_id"]].append((row["started_at"], row["ended_at"]))
+        day_windows = defaultdict(list)
+        for cell in self.cells:
+            day_windows[cell.date].extend(cell.windows)
+        best = None
+        for windows in day_windows.values():
+            eligible = intersect(windows, self.by_state["ACTIVE"])
+            for app_id, sessions in grouped.items():
+                for start, end in intersect(sessions, eligible):
+                    candidate = {
+                        "duration_ms": end - start,
+                        "started_at": start,
+                        "ended_at": end,
+                        "application": {
+                            "id": app_id,
+                            "name": self.applications[app_id]["name"],
+                            "icon_url": f"/applications/{app_id}/icon",
+                        },
+                    }
+                    if best is None or candidate["duration_ms"] > best["duration_ms"]:
+                        best = candidate
+        return best
+
+    def advanced_kpi(self, previous):
+        switches = self.context_switches()["context_switches"]
+        active_ms = self.system()["active_ms"]
+        previous_switches = (
+            previous.context_switches()["context_switches"] if previous else 0
+        )
+        previous_active_ms = previous.system()["active_ms"] if previous else 0
+        previous_average = previous._daily_average() if previous else None
+
+        def per_hour(count, active):
+            return round(count / (active / 3_600_000), 1) if active else None
+
+        return {
+            "has_tracking_data": bool(self.tracked.intervals),
+            "context_switches": switches,
+            "context_switches_per_active_hour": per_hour(switches, active_ms),
+            "longest_focus": self.longest_focus(),
+            "average_active_per_day_ms": self._daily_average(),
+            "comparison": {
+                "has_tracking_data": bool(previous and previous.tracked.intervals),
+                "previous_context_switches": previous_switches,
+                "context_switches_change_percent": (
+                    round((switches - previous_switches) / previous_switches * 100, 1)
+                    if previous_switches
+                    else None
+                ),
+                "previous_switches_per_active_hour": per_hour(
+                    previous_switches, previous_active_ms
+                ),
+                "previous_average_active_per_day_ms": previous_average,
+            },
+        }
+
+    def advanced_weekly(self, previous):
+        records = self.daily_activity()
+        previous_average = previous._daily_average() if previous else None
+        if self.selection.days <= 7:
+            return {
+                "mode": "week",
+                "days": records,
+                "previous_period_average_ms": previous_average,
+            }
+        grouped = defaultdict(list)
+        for record in records:
+            grouped[record["weekday"]].append(record)
+        days = []
+        for weekday in range(1, 8):
+            observed = [r for r in grouped[weekday] if r["status"] == "data"]
+            days.append(
+                {
+                    "weekday": weekday,
+                    "average_active_ms": (
+                        round(sum(r["active_ms"] for r in observed) / len(observed))
+                        if observed
+                        else None
+                    ),
+                    "sample_days": len(observed),
+                }
+            )
+        return {
+            "mode": "weekday_average",
+            "days": days,
+            "previous_period_average_ms": previous_average,
+        }
+
+    def advanced_dynamics(self):
+        if self.selection.days == 1:
+            points = []
+            for cell in self.cells:
+                windows = union(cell.windows)
+                elapsed = intersect(windows, [(-(2**63), self.now)])
+                tracked_ms = self.tracked.measure(windows)
+                active_ms = self.active.measure(windows)
+                if not windows:
+                    status = "no_data"
+                elif not elapsed:
+                    status = "future"
+                elif tracked_ms:
+                    status = "data"
+                else:
+                    status = "no_data"
+
+                start_label = time_label(cell.minute_from)
+                if cell.minute_to == 1440:
+                    end_date = cell.local_date + timedelta(days=1)
+                    end_label = "00:00"
+                else:
+                    end_date = cell.local_date
+                    end_label = time_label(cell.minute_to)
+                points.append(
+                    {
+                        "start": f"{cell.local_date.isoformat()}T{start_label}",
+                        "end": f"{end_date.isoformat()}T{end_label}",
+                        "label": start_label,
+                        "end_label": end_label,
+                        "active_ms": active_ms if status == "data" else None,
+                        "total_active_ms": active_ms if status == "data" else None,
+                        "average_per_day_ms": None,
+                        "sample_days": 1 if status == "data" else 0,
+                        "status": status,
+                    }
+                )
+            return {"granularity": "hour", "points": points}
+
+        records = self.daily_activity()
+        days = self.selection.days
+        granularity = "day" if days <= 31 else "week" if days <= 183 else "month"
+        grouped = defaultdict(list)
+        bounds = {}
+        for record in records:
+            day = date.fromisoformat(record["date"])
+            if granularity == "day":
+                key = day
+                start, end = day, day + timedelta(days=1)
+            elif granularity == "week":
+                start = day - timedelta(days=day.weekday())
+                end = start + timedelta(days=7)
+                key = start
+            else:
+                start = day.replace(day=1)
+                end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+                key = start
+            grouped[key].append(record)
+            bounds[key] = (start, end)
+        points = []
+        for key, bucket in sorted(grouped.items()):
+            observed = [r for r in bucket if r["status"] == "data"]
+            total = sum(r["active_ms"] for r in observed)
+            status = (
+                "data"
+                if observed
+                else "future"
+                if all(r["status"] == "future" for r in bucket)
+                else "no_data"
+            )
+            start, end = bounds[key]
+            points.append(
+                {
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "active_ms": total if status == "data" else None,
+                    "total_active_ms": total if status == "data" else None,
+                    "average_per_day_ms": round(total / len(observed)) if observed else None,
+                    "sample_days": len(observed),
+                    "status": status,
+                }
+            )
+        return {"granularity": granularity, "points": points}
+
+    def advanced_apps(self):
+        totals = self._application_totals()
+        sessions = defaultdict(list)
+        selected = Coverage(self.past)
+        for row in self._sessions("application_running_sessions"):
+            app = self.applications[row["application_id"]]
+            if (
+                not app["ignored"]
+                and row["ended_at"] > row["started_at"]
+                and selected.contains(row["started_at"])
+            ):
+                sessions[row["application_id"]].append(row["ended_at"] - row["started_at"])
+        app_ids = set(totals) | set(sessions)
+        items = []
+        for app_id in app_ids:
+            app = self.applications[app_id]
+            if app["ignored"]:
+                continue
+            values = totals[app_id]
+            durations = sessions[app_id]
+            if not any((*values.values(), len(durations))):
+                continue
+            items.append(
+                {
+                    "application_id": app_id,
+                    "name": app["name"],
+                    "icon_url": f"/applications/{app_id}/icon",
+                    "color": app["color"],
+                    **values,
+                    "usage_ratio": (
+                        values["active_ms"] / values["running_ms"]
+                        if values["running_ms"]
+                        else None
+                    ),
+                    "launch_count": len(durations),
+                    "average_session_ms": (
+                        round(sum(durations) / len(durations)) if durations else None
+                    ),
+                    "max_session_ms": max(durations) if durations else None,
+                }
+            )
+        items.sort(key=lambda item: (-item["active_ms"], item["application_id"]))
+        return {"has_tracking_data": bool(self.tracked.intervals), "items": items}
+
+    def _transition_counts(self):
+        if not self.past:
+            return {}
+        query = (
+            "SELECT f.* FROM foreground_sessions f JOIN applications a "
+            "ON a.id=f.application_id WHERE a.ignored=0 AND f.started_at < ? "
+            "AND (f.ended_at IS NULL OR f.ended_at > f.started_at) "
+        )
+        previous = self.connection.execute(
+            query + "AND f.started_at < ? ORDER BY f.started_at DESC,f.id DESC LIMIT 1",
+            (self.upper, self.lower),
+        ).fetchone()
+        rows = self.connection.execute(
+            query + "AND f.started_at >= ? ORDER BY f.started_at,f.id", (self.upper, self.lower)
+        )
+        run_starts = [
+            row[0]
+            for row in self.connection.execute(
+                "SELECT started_at FROM tracker_runs ORDER BY started_at"
+            )
+        ]
+        counts = defaultdict(int)
+        for row in rows:
+            at = row["started_at"]
+            if row["ended_at"] is not None and row["ended_at"] <= at:
+                continue
+            if (
+                previous is not None
+                and previous["application_id"] != row["application_id"]
+                and bisect_right(run_starts, previous["started_at"])
+                == bisect_right(run_starts, at)
+                and self.active.contains(at)
+            ):
+                counts[(previous["application_id"], row["application_id"])] += 1
+            previous = row
+        return dict(counts)
+
+    def advanced_transitions(self, application_ids=None):
+        if application_ids:
+            if len(application_ids) > 10 or len(set(application_ids)) != len(application_ids):
+                raise ValueError("Choose up to ten distinct applications")
+            if any(
+                app_id not in self.applications or self.applications[app_id]["ignored"]
+                for app_id in application_ids
+            ):
+                raise ValueError("Choose existing non-ignored applications")
+        counts = self._transition_counts()
+        participation = defaultdict(int)
+        for (source, target), count in counts.items():
+            participation[source] += count
+            participation[target] += count
+        default_ids = sorted(
+            participation, key=lambda app_id: (-participation[app_id], app_id)
+        )[:10]
+        selected_ids = default_ids if not application_ids else application_ids
+
+        def app_json(app_id):
+            app = self.applications[app_id]
+            return {
+                "id": app_id,
+                "name": app["name"],
+                "icon_url": f"/applications/{app_id}/icon",
+                "color": app["color"],
+                "participation": participation[app_id],
+            }
+
+        pairs = [
+            {"from_application_id": source, "to_application_id": target, "count": count}
+            for (source, target), count in counts.items()
+        ]
+        pairs.sort(
+            key=lambda item: (
+                -item["count"],
+                item["from_application_id"],
+                item["to_application_id"],
+            )
+        )
+        selected_set = set(selected_ids)
+        candidates = [
+            app_json(app_id)
+            for app_id, app in self.applications.items()
+            if not app["ignored"]
+        ]
+        candidates.sort(key=lambda app: (app["name"].casefold(), app["id"]))
+        return {
+            "has_tracking_data": bool(self.tracked.intervals),
+            "top_transitions": pairs[:3],
+            "default_applications": [app_json(app_id) for app_id in default_ids],
+            "selected_applications": [app_json(app_id) for app_id in selected_ids],
+            "applications": candidates,
+            "matrix": [
+                pair
+                for pair in pairs
+                if pair["from_application_id"] in selected_set
+                and pair["to_application_id"] in selected_set
+            ],
         }
 
     def timeline(self, *, include_titles=True):
@@ -178,39 +541,7 @@ class Statistics:
         return result
 
     def context_switches(self):
-        if not self.past:
-            return {"context_switches": 0}
-        # Preserve the preceding non-ignored app even if it ended before the filter boundary.
-        query = (
-            "SELECT f.* FROM foreground_sessions f JOIN applications a "
-            "ON a.id=f.application_id WHERE a.ignored=0 AND f.started_at < ? "
-            "AND (f.ended_at IS NULL OR f.ended_at > f.started_at) "
-        )
-        previous = self.connection.execute(
-            query + "AND f.started_at < ? ORDER BY f.started_at DESC,f.id DESC LIMIT 1",
-            (self.upper, self.lower),
-        ).fetchone()
-        rows = self.connection.execute(
-            query + "AND f.started_at >= ? ORDER BY f.started_at,f.id", (self.upper, self.lower)
-        )
-        runs = self.connection.execute(
-            "SELECT started_at FROM tracker_runs ORDER BY started_at"
-        ).fetchall()
-        run_starts = [r[0] for r in runs]
-        count = 0
-        for row in rows:
-            at = row["started_at"]
-            if row["ended_at"] is not None and row["ended_at"] <= at:
-                continue
-            if (
-                previous is not None
-                and previous["application_id"] != row["application_id"]
-                and bisect_right(run_starts, previous["started_at"]) == bisect_right(run_starts, at)
-                and self.active.contains(at)
-            ):
-                count += 1
-            previous = row
-        return {"context_switches": count}
+        return {"context_switches": sum(self._transition_counts().values())}
 
     def activity(self):
         cells = []

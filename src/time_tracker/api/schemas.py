@@ -1,7 +1,9 @@
 """Validated request/response contracts for the local dashboard API."""
 
+from __future__ import annotations
+
 import re
-from datetime import date
+from datetime import date as Date
 from typing import Literal
 from zoneinfo import ZoneInfoNotFoundError
 
@@ -11,8 +13,8 @@ from time_tracker.domain.time_windows import TimeSelection
 
 
 class Filters(BaseModel):
-    date_from: date
-    date_to: date
+    date_from: Date
+    date_to: Date
     time_from: str | None = None
     time_to: str | None = None
     timezone: str | None = None
@@ -78,6 +80,19 @@ class ExportFilters(Filters):
     include_titles: bool = False
 
 
+class AdvancedTransitionFilters(Filters):
+    application_ids: list[int] = Field(default_factory=list, max_length=10)
+
+    @field_validator("application_ids")
+    @classmethod
+    def distinct_positive_applications(cls, value):
+        if any(application_id < 1 for application_id in value):
+            raise ValueError("Application IDs must be positive")
+        if len(set(value)) != len(value):
+            raise ValueError("Choose distinct applications")
+        return value
+
+
 class ApplicationPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     ignored: StrictBool | None = None
@@ -136,6 +151,104 @@ class ContextSwitches(BaseModel):
     context_switches: int
 
 
+class AdvancedApplicationReference(BaseModel):
+    id: int
+    name: str
+    icon_url: str
+    color: str | None = None
+    participation: int | None = None
+
+
+class FocusSession(BaseModel):
+    duration_ms: int
+    started_at: int
+    ended_at: int
+    application: AdvancedApplicationReference
+
+
+class AdvancedComparison(BaseModel):
+    has_tracking_data: bool
+    previous_context_switches: int
+    context_switches_change_percent: float | None
+    previous_switches_per_active_hour: float | None
+    previous_average_active_per_day_ms: int | None
+
+
+class AdvancedKpi(BaseModel):
+    has_tracking_data: bool
+    context_switches: int
+    context_switches_per_active_hour: float | None
+    longest_focus: FocusSession | None
+    average_active_per_day_ms: int | None
+    comparison: AdvancedComparison
+
+
+class AdvancedWeekDay(BaseModel):
+    weekday: int
+    date: Date | None = None
+    active_ms: int | None = None
+    tracked_ms: int | None = None
+    status: Literal["data", "no_data", "future"] | None = None
+    average_active_ms: int | None = None
+    sample_days: int | None = None
+
+
+class AdvancedWeekly(BaseModel):
+    mode: Literal["week", "weekday_average"]
+    days: list[AdvancedWeekDay]
+    previous_period_average_ms: int | None
+
+
+class DynamicsPoint(BaseModel):
+    start: str
+    end: str
+    label: str | None = None
+    end_label: str | None = None
+    active_ms: int | None
+    total_active_ms: int | None
+    average_per_day_ms: int | None
+    sample_days: int
+    status: Literal["data", "no_data", "future"]
+
+
+class AdvancedDynamics(BaseModel):
+    granularity: Literal["hour", "day", "week", "month"]
+    points: list[DynamicsPoint]
+
+
+class AdvancedApplicationStats(BaseModel):
+    application_id: int
+    name: str
+    icon_url: str
+    color: str | None = None
+    active_ms: int
+    running_ms: int
+    usage_ratio: float | None
+    launch_count: int
+    average_session_ms: int | None
+    max_session_ms: int | None
+
+
+class AdvancedApplications(BaseModel):
+    has_tracking_data: bool
+    items: list[AdvancedApplicationStats]
+
+
+class Transition(BaseModel):
+    from_application_id: int
+    to_application_id: int
+    count: int
+
+
+class AdvancedTransitions(BaseModel):
+    has_tracking_data: bool
+    top_transitions: list[Transition]
+    default_applications: list[AdvancedApplicationReference]
+    selected_applications: list[AdvancedApplicationReference]
+    applications: list[AdvancedApplicationReference]
+    matrix: list[Transition]
+
+
 class Segment(BaseModel):
     started_at: int
     ended_at: int
@@ -162,8 +275,8 @@ class HourFields(BaseModel):
 
 
 class DateCell(HourFields):
-    date: date
-    local_date: date
+    date: Date
+    local_date: Date
     hour_occurrences: int
     active_ms: int
     window_ms: int

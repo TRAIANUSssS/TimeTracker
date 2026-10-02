@@ -3,13 +3,14 @@ import { createRoot } from "react-dom/client";
 import "@fontsource-variable/manrope";
 import "./styles.css";
 import { DateRange, Icon, TimeRange } from "./controls";
-import { AppsTable, Empty, ErrorState, TableSkeleton } from "./Table";
+import { AppsTable, ErrorState, TableSkeleton } from "./Table";
 import { Heatmap, Timeline, Tip } from "./Activity";
 import { defaults, duration, personalToday, configureFormat } from "./format";
-import { useDashboard } from "./requests";
+import { useAdvanced, useDashboard } from "./requests";
 import { Settings } from "./Settings";
 import { Onboarding } from "./Onboarding";
 import { defaultDisplay, usePreferences } from "./preferences";
+import { Advanced } from "./Advanced";
 
 function Background() {
   return (
@@ -26,6 +27,7 @@ function App() {
   configureFormat(preferences.value?.display || defaultDisplay);
   const [filters, setFilters] = useState(defaults),
     [expanded, setExpanded] = useState(false),
+    [matrixApplications, setMatrixApplications] = useState<number[]>([]),
     [refresh, setRefresh] = useState({ value: 0, background: false }),
     [path, setPath] = useState(location.pathname);
   const isSettings = path.startsWith("/settings");
@@ -58,7 +60,19 @@ function App() {
     preferences.value?.display.personal_day_start,
     preferences.value?.display.timezone,
   ]);
-  const data = useDashboard(filters, refresh.value, refresh.background),
+  const data = useDashboard(
+      filters,
+      refresh.value,
+      refresh.background,
+      path === "/",
+    ),
+    advanced = useAdvanced(
+      filters,
+      refresh.value,
+      refresh.background,
+      path === "/advanced",
+      matrixApplications,
+    ),
     defaultFilters = defaults();
   const isDefault = JSON.stringify(filters) === JSON.stringify(defaultFilters),
     updateFilters = (next: typeof filters) => {
@@ -328,12 +342,63 @@ function App() {
           </section>
         </div>
         {path === "/advanced" && (
-          <div className="placeholder-card">
-            <Empty
-              title="Расширенная статистика появится позже"
-              subtitle="Здесь будут дополнительные метрики и аналитика."
+          <>
+            <section
+              className="filters advanced-filters"
+              aria-label="Фильтры расширенной статистики"
+            >
+              <DateRange
+                filters={filters}
+                onChange={(date_from, date_to) =>
+                  updateFilters({ ...filters, date_from, date_to })
+                }
+              />
+              <TimeRange
+                filters={filters}
+                onChange={(time_from, time_to) =>
+                  updateFilters({
+                    ...filters,
+                    time_from,
+                    time_to,
+                    full_day: String(
+                      time_from === (filters.personal_day_start || "00:00") &&
+                        (time_to === time_from ||
+                          (time_from === "00:00" && time_to === "24:00")),
+                    ),
+                  })
+                }
+              />
+              <button
+                className="text-button reset"
+                disabled={isDefault}
+                onClick={() => updateFilters(defaults())}
+              >
+                Сбросить
+              </button>
+              <button
+                className="icon-button refresh"
+                aria-label="Обновить расширенную статистику"
+                title="Обновить статистику"
+                disabled={advanced.pending}
+                onClick={retry}
+              >
+                <span className={advanced.pending ? "spinning" : ""}>
+                  <Icon name="refresh" />
+                </span>
+              </button>
+            </section>
+            <p className="personal-day-caption">
+              День: {filters.personal_day_start || "00:00"}–
+              {filters.personal_day_start || "00:00"} следующего дня
+            </p>
+            <Advanced
+              data={advanced}
+              filters={filters}
+              retry={retry}
+              customIds={matrixApplications}
+              onApplicationIds={setMatrixApplications}
             />
-          </div>
+          </>
         )}
         {isSettings && (
           <Settings

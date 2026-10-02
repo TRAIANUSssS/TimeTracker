@@ -106,7 +106,64 @@ def test_http_stats_contracts_and_open_session_now(api):
         response = client.get("/stats/activity", params=PARAMS | {"date_to": end})
         assert response.status_code == 200, response.text
         assert ("weekday" in response.json()[0]) == (end == "2026-09-30")
+    kpi = client.get("/stats/advanced/kpi", params=PARAMS)
+    assert kpi.status_code == 200, kpi.text
+    assert kpi.json()["longest_focus"]["duration_ms"] == 900000
+    assert kpi.json()["average_active_per_day_ms"] == 900000
+    assert kpi.json()["comparison"]["has_tracking_data"] is False
+    weekly = client.get("/stats/advanced/weekly", params=PARAMS).json()
+    assert weekly["mode"] == "week"
+    assert len(weekly["days"]) == 7
+    assert weekly["days"][0]["date"] == "2026-09-02"
+    assert weekly["days"][-1] == {
+        "weekday": 2,
+        "date": "2026-09-08",
+        "active_ms": 900000,
+        "tracked_ms": 900000,
+        "status": "data",
+        "average_active_ms": None,
+        "sample_days": None,
+    }
+    dynamics = client.get("/stats/advanced/dynamics", params=PARAMS).json()
+    assert dynamics["granularity"] == "hour"
+    assert len(dynamics["points"]) == 24
+    active_hour = dynamics["points"][8]
+    assert active_hour["label"] == "08:00"
+    assert active_hour["end_label"] == "09:00"
+    assert active_hour["active_ms"] == 900000
+    advanced_apps = client.get("/stats/advanced/apps", params=PARAMS).json()
+    assert advanced_apps["items"][0]["launch_count"] == 1
+    assert advanced_apps["items"][0]["average_session_ms"] == 900000
+    transition_response = client.get("/stats/advanced/transitions", params=PARAMS)
+    assert transition_response.status_code == 200, transition_response.text
+    transitions = transition_response.json()
+    assert transitions["top_transitions"] == []
+    assert transitions["selected_applications"] == []
     assert client.get("/openapi.json").status_code == 200
+
+
+def test_advanced_transition_selection_validation(api):
+    client = api[0]
+    duplicate = [("application_ids", "1"), ("application_ids", "1")]
+    assert (
+        client.get(
+            "/stats/advanced/transitions", params=PARAMS | {"application_ids": 99}
+        ).status_code
+        == 422
+    )
+    assert client.get(
+        "/stats/advanced/transitions",
+        params=[*PARAMS.items(), *duplicate],
+    ).status_code == 422
+
+
+def test_advanced_comparison_handles_earliest_supported_date(api):
+    response = api[0].get(
+        "/stats/advanced/kpi",
+        params={"date_from": "0002-01-01", "date_to": "0002-01-01", "timezone": "UTC"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["comparison"]["has_tracking_data"] is False
 
 
 def test_history_export_contract_and_title_opt_in(api):
