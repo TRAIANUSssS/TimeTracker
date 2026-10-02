@@ -328,6 +328,16 @@ test("settings navigation works at smaller widths", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/settings");
   await expect(page.getByRole("table")).toBeVisible();
+  const navigationGaps = await page
+    .locator(".settings-nav a")
+    .evaluateAll((links) =>
+      links.slice(1).map((link, index) => {
+        const previous = links[index].getBoundingClientRect(),
+          current = link.getBoundingClientRect();
+        return Math.round(current.top - previous.bottom);
+      }),
+    );
+  expect(new Set(navigationGaps).size).toBe(1);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,

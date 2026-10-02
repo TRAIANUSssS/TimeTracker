@@ -1802,9 +1802,6 @@ body:has(.settings-layout),
 .settings-nav a[aria-current] svg {
   color: #eb689b;
 }
-.settings-nav a:last-child {
-  margin-top: 12px;
-}
 .settings-panel {
   padding: 32px;
   border-radius: 28px;
@@ -2815,9 +2812,6 @@ body:has(.settings-layout),
     padding: 10px;
     font-size: 12px;
     gap: 8px;
-  }
-  .settings-nav a:last-child {
-    margin-top: 0;
   }
   .settings-panel {
     padding: 20px;
