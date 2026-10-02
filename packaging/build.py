@@ -12,6 +12,42 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def make_version_file(work: Path) -> Path:
+    from time_tracker import __version__
+
+    numeric = [int(part) for part in __version__.split(".")]
+    version = tuple((numeric + [0, 0, 0, 0])[:4])
+    version_text = ".".join(map(str, version))
+    path = work / "version-info.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"""VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={version},
+    prodvers={version},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)),
+  kids=[
+    StringFileInfo([
+      StringTable('040904B0', [
+        StringStruct('CompanyName', 'TimeTracker'),
+        StringStruct('FileDescription', 'TimeTracker'),
+        StringStruct('FileVersion', '{version_text}'),
+        StringStruct('InternalName', 'TimeTracker'),
+        StringStruct('OriginalFilename', 'TimeTracker.exe'),
+        StringStruct('ProductName', 'TimeTracker'),
+        StringStruct('ProductVersion', '{version_text}')])]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])])
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
 def make_icon():
     image = Image.new("RGBA", (256, 256))
     draw = ImageDraw.Draw(image)
@@ -38,6 +74,7 @@ def main():
     output, work = (ROOT / "dist").resolve(), (ROOT / "build").resolve()
     if output.parent != ROOT or work.parent != ROOT:
         raise RuntimeError("Build outputs must remain directly inside the project")
+    version_file = make_version_file(work)
     subprocess.run(
         [
             sys.executable,
@@ -58,6 +95,8 @@ def main():
             str(ROOT / "src"),
             "--icon",
             str(ROOT / "packaging" / "timetracker.ico"),
+            "--version-file",
+            str(version_file),
             "--add-data",
             f"{ROOT / 'frontend' / 'dist'};web",
             "--add-data",
